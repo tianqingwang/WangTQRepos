@@ -3,6 +3,14 @@
 #include <string.h>
 #include "socket.h"
 
+
+CSock::~CSock()
+{
+    if (m_sockfd != 0){
+        Close();
+    }
+}
+
 /*purpose:create socket only*/
 bool CSock::Create(int domain, int type, int protocol)
 {
@@ -20,6 +28,9 @@ bool CSock::Create(const char *sIP,const short nPort, int domain, int type, int 
     
     /*get a socket descriptor*/
     m_sockfd = socket(domain,type,protocol);
+#ifdef DEBUG
+    printf("(%s:%d):m_sockfd=%d\n",__FILE__,__LINE__,m_sockfd);
+#endif
     if (m_sockfd == -1)
     {
         return false;
@@ -30,6 +41,9 @@ bool CSock::Create(const char *sIP,const short nPort, int domain, int type, int 
     
     sockAddr.sin_family = domain;
     if(sIP == 0){
+#ifdef DEBUG
+        printf("(%s:%d):sIP=0, set to INADDR_ANY\n",__FILE__,__LINE__);
+#endif
         sockAddr.sin_addr.s_addr = htonl(INADDR_ANY);
     }
     else{
@@ -38,7 +52,10 @@ bool CSock::Create(const char *sIP,const short nPort, int domain, int type, int 
     sockAddr.sin_port = htons(nPort);
     
     if (Bind((const struct sockaddr*)&sockAddr,sizeof(sockAddr)) == false){
-        CloseSocket();
+#ifdef DEBUG
+        printf("(%s:%d):bind failed\n",__FILE__,__LINE__);
+#endif
+        Close();
         return false;
     }
     
@@ -74,27 +91,43 @@ bool CSock::Listen(int backlog){
     return ret == 0 ? true:false;
 }
 
-bool CSock::Connect(const struct sockaddr *serv_addr, int nAddrLen)
+int  CSock::Connect(const struct sockaddr *serv_addr, int nAddrLen)
 {
-    return connect(m_sockfd,serv_addr,nAddrLen);
+    int ret = 0;
+    ret = connect(m_sockfd,serv_addr,nAddrLen);
+#ifdef DEBUG
+    printf("(%s:%d):connect ret=%d\n",__FILE__,__LINE__,ret);
+#endif
+    return ret;
 }
 
-bool CSock::Accept(struct sockaddr *addr, int *nAddrLen)
+int  CSock::Accept(struct sockaddr *addr, int *nAddrLen)
 {
-    return accept(m_sockfd,addr, (socklen_t*)nAddrLen);
+    int ret = 0;
+    ret = accept(m_sockfd,addr, (socklen_t*)nAddrLen);
+
+#ifdef DEBUG
+    printf("(%s:%d): accept ret=%d\n",__FILE__,__LINE__,ret);
+#endif
+    return ret;
 }
 
-int CSock::Send(const void *pbuf, int nbuf, int flags)
+int CSock::Send(int sockfd,const void *pbuf, int nbuf, int flags)
 {
-    return send(m_sockfd,pbuf,nbuf,flags);
+    return send(sockfd,pbuf,nbuf,flags);
 }
 
-int CSock::Receive(void *pbuf, int nbuf, int flags)
+int CSock::Receive(int sockfd,void *pbuf, int nbuf, int flags)
 {
-    return recv(m_sockfd,pbuf,nbuf,flags);
+    return recv(sockfd,pbuf,nbuf,flags);
 }
 
-bool CSock::CloseSocket()
+bool CSock::Close()
 {
     return close(m_sockfd);
+}
+
+int CSock::GetSocket()
+{
+    return m_sockfd;
 }
