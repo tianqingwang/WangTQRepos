@@ -3,26 +3,24 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#incude <netdb.h>
+#incude  <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
-class CSock{
-public:
-    CSock(){ /*construct function*/
-        m_sockfd = -1;
-    }
-    ~CSock(); /*deconstruct function*/
-    bool Create(); /*setup socket*/
-    bool SetSockOpt();
-    bool Bind();
-    bool Listen(int backlog = 5);
-    bool Connect();
-    bool Accept();
-    int  Send();
-    int  Receive();
-	
-    bool CloseSocket();
-private:
-	int m_sockfd;
-};
+int Create(int domain=AF_INET, int type=SOCK_STREAM, int protocol=0); /*setup socket*/
+/*create sock and bind to sIP:nPort*/
+int CreateByIP(char *sIP,short nPort,int domain=AF_INET, int type=SOCK_STREAM, int protocol=0);
+/*set socket options*/
+int SetSockOpt(int sockfd,int level,int optname, const void *optval, int optlen);
+
+int Bind(int sockfd,struct sockaddr *pAddr,int nAddrLen);
+int Listen(int sockfd,int backlog=5);
+int Connect(int sockfd,struct sockaddr *serv_addr, int nAddrLen);
+int Accept(int sockfd,struct sockaddr *addr, int *nAddrLen);
+/*data operation*/
+int Send(int sockfd,void *pbuf, int nbuf, int flags = 0);
+int Receive(int sockfd,void *pbuf, int nbuf, int flags=0);
+
+int Close(int sockfd);
 
 #endif
