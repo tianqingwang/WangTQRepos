@@ -1,21 +1,30 @@
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
-#inclue <stdio.h>
+#include <stdio.h>
 
+#define MSGLEN   (2048)
 
 int main(int argc, char *argv[])
 {
     int sockfd;
     struct sockaddr_in servaddr;
     int addrlen = sizeof(servaddr);
-    char msg[]="hello,world!";
+    char msg[2048]={0};
     char recvline[1024];
     
-    char sIP[]="192.168.107.208";
+    char sIP[]="127.0.0.1";
     int  nPort = 58888;
+    
+    int fd = open("afhan",O_RDONLY);
+    if (fd < 0){
+        perror("open error");
+        return -1;
+    }
     
     sockfd = socket(AF_INET,SOCK_STREAM,0);
     if (sockfd == -1){
@@ -33,8 +42,10 @@ int main(int argc, char *argv[])
         return -1;
     }
     else{
-        send(sockfd,msg,strlen(msg),0);
-        int recvlen = recv(sockfd,recvline,1024,0);
+        int n = read(fd,msg,MSGLEN);
+        send(sockfd,msg,n,0);
+        printf("client sent:%s\n\n",msg);
+        int recvlen = recv(sockfd,recvline,MSGLEN,0);
         recvline[recvlen] = '\0';
         printf("received:%s\n",recvline);
     }
