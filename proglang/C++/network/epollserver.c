@@ -79,8 +79,8 @@ int main(int argc, char* argv[]){
     }
     
     while(1){
-        nevents = epoll_wait(epfd, event_list,MAXEVENTS,500);
-        printf("epoll_wait events=%d\n",nevents);
+        nevents = epoll_wait(epfd, event_list,MAXEVENTS,200);
+//        printf("epoll_wait events=%d\n",nevents);
         for (n=0; n<nevents; n++){
             if (event_list[n].events & (EPOLLERR | EPOLLHUP)){
                 fprintf(stderr,"epoll wait error in event_list[%d]\n",n);
@@ -97,6 +97,7 @@ int main(int argc, char* argv[]){
                     int connfd = accept(listenfd,(struct sockaddr*)&conn_addr,(socklen_t*)&len);
                     /*set connfd as noblock*/
                     setnonblocking(connfd);
+                    printf("connfd=%d\n",connfd);
                     
                     //printf("connect  port = %d\n",ntohs(conn_addr.sin_port));
                     
@@ -110,6 +111,7 @@ int main(int argc, char* argv[]){
                         event.events = EPOLLIN | EPOLLET;
                         epoll_ctl(epfd,EPOLL_CTL_ADD,connfd,&event);
                     }
+                    
                 }
                 else if (event_list[n].events & EPOLLIN){
                     /*read event*/
@@ -118,6 +120,7 @@ int main(int argc, char* argv[]){
                     rwEvent = (EVENT_S*)event_list[n].data.ptr;
                     
                     mysockfd = rwEvent->sockfd;
+                    printf("read sockfd=%d\n",mysockfd);
                     if (mysockfd < 0){
                         continue;
                     }
@@ -136,7 +139,7 @@ int main(int argc, char* argv[]){
                     }
                     else{
                         /*read complete*/
-                        printf("server received:%s\n\n",rwEvent->buffer);
+                        printf("server received(sockfd=%d):%s\n\n",rwEvent->sockfd,rwEvent->buffer);
                        
                         rwEvent->len    = recvlen;
                         rwEvent->offset = recvlen;
@@ -154,6 +157,7 @@ int main(int argc, char* argv[]){
                     rwEvent = (EVENT_S*)event_list[n].data.ptr;
                     //mysockfd = event_list[n].data.fd;
                     mysockfd = rwEvent->sockfd;
+                    printf("write sockfd=%d\n",mysockfd);
                     if (mysockfd < 0){
                         continue;
                     }
