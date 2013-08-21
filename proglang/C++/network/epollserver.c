@@ -70,8 +70,7 @@ int main(int argc, char* argv[]){
     event_s->sockfd = listenfd;
     
     event.data.ptr = event_s;
-    event.events = EPOLLIN|EPOLLET; /*read and edge trigger*/
-    
+    event.events = EPOLLIN; /*NOTICE: use EPOLLLT for listening socket*/
     int ret = epoll_ctl(epfd, EPOLL_CTL_ADD,listenfd,&event);
     if (ret == -1){
         perror("epoll_ctl error");
