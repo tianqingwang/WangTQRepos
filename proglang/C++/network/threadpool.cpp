@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include "threadpool.h"
 
 CThreadPool::CThreadPool()
@@ -11,12 +12,28 @@ CThreadPool::CThreadPool()
    CThreadPool(2,2);
 }
 
+CThreadPool::CThreadPool(int maxThreads)
+{
+    m_minThreads = maxThreads;
+    m_maxThreads = maxThreads;
+    m_curThreads = maxThreads;
+
+    m_thread_pool.shutdown = 0;
+    
+    pthread_attr_init(&m_attr);
+    set_thread_attr(PTHREAD_CREATE_DETACHED, PTHREAD_SCOPE_SYSTEM);
+    pthread_mutex_init(&m_thread_pool.pool_lock,NULL);
+    
+    create_thread_pool();
+}
 
 CThreadPool::CThreadPool(int minThreads,int maxThreads)
 {
     m_minThreads = minThreads; 
     m_maxThreads = maxThreads;
     m_curThreads = m_minThreads;
+  
+    m_taskNum    = 0;
     
     m_thread_pool.shutdown = 0;
 
@@ -32,35 +49,37 @@ CThreadPool::CThreadPool(int minThreads,int maxThreads)
 
 CThreadPool::~CThreadPool()
 {
-    pthread_mutex_destroy(&m_thread_pool.pool_lock);
-    
-    destroy_pool();
-}
-
-void CThreadPool::destroy_pool()
-{
     int i;
-    
-    for (i=0; i<m_curThreads; i++){
-//        kill(m_thread_pool.thread_info[i].thread_id,SIGKILL); 
-          m_thread_pool.thread_info[i].stopflag = 1;        
-    } 
 
-    m_thread_pool.shutdown = 1; /*kill manage thread*/ 
+    for (i=0; i<m_curThreads; i++){
+        m_thread_pool.thread_info[i].stopflag = 1;
+
+        /*wait thread to be over*/
+        while(pthread_kill(m_thread_pool.thread_info[i].thread_id,0) != ESRCH){
+        }
+    }
+
+    m_thread_pool.shutdown = 1;
     
-    free(m_thread_pool.thread_info);
-    
-    m_curThreads = 0;
+    delete [] m_thread_pool.thread_info;
+    m_thread_pool.thread_info = NULL;
+
     m_minThreads = 0;
     m_maxThreads = 0;
+    m_curThreads = 0;
+    
+    pthread_mutex_destroy(&m_thread_pool.pool_lock);
 }
+
 
 void CThreadPool::create_thread_pool()
 {
     int i=0;
+    m_thread_pool.thread_info = NULL;
+    printf("the address=%p\n",m_thread_pool.thread_info);
 
-    m_thread_pool.thread_info = (thread_info_t*)malloc(sizeof(thread_info_t)*m_maxThreads);
-    
+    m_thread_pool.thread_info = new thread_info_t[m_maxThreads];
+     
     for (i=0; i<m_minThreads; i++){
         m_thread_pool.thread_info[i].proc = NULL;
         m_thread_pool.thread_info[i].args = NULL;
@@ -88,19 +107,17 @@ void *CThreadPool::worker_thread(void *args)
     int index;
    
     CThreadPool *pTP = (CThreadPool*)args; 
-    
    
     work_thread_id = pthread_self();
-    printf("work_thread_id = 0x%x\n",work_thread_id);
     index = pTP->get_thread_by_id(work_thread_id);
 
     while(!pTP->m_thread_pool.thread_info[index].stopflag)
     {
         if (pTP->m_thread_pool.thread_info[index].proc != NULL){
             pTP->m_thread_pool.thread_info[index].proc(pTP->m_thread_pool.thread_info[index].args);
+            pTP->m_thread_pool.thread_info[index].is_busy = false;
         }
-        pTP->m_thread_pool.thread_info[index].is_busy = false; 
-    } 
+    }
 }
 
 
@@ -160,13 +177,18 @@ bool CThreadPool::add_thread()
         return false;
     }
 
+    printf("add new thread\n");    
+    
+
     thread_info_t *new_thread= &m_thread_pool.thread_info[m_curThreads];
     
     if (new_thread == NULL){
         return false;
     }
-
+    
+    pthread_mutex_lock(&m_thread_pool.pool_lock);
     m_curThreads ++;
+    pthread_mutex_unlock(&m_thread_pool.pool_lock);
     
     pthread_create(&new_thread->thread_id,&m_attr, &CThreadPool::worker_thread,(void*)this);
     
@@ -183,12 +205,15 @@ bool CThreadPool::del_thread()
         return false; 
     }
     
+    pthread_mutex_lock(&m_thread_pool.pool_lock); 
     m_curThreads--;
+    pthread_mutex_unlock(&m_thread_pool.pool_lock);
     
     kill(m_thread_pool.thread_info[m_curThreads].thread_id, SIGKILL);
 
 }
 
+#if 0
 void CThreadPool::pool_close()
 {   
     int i = 0;
@@ -206,11 +231,12 @@ void CThreadPool::pool_close()
         m_thread_pool.shutdown = 1;
     }
 }
+#endif
 
 void CThreadPool::register_task(process_callback func, void *args)
 {
     int i;
-    
+
     for (i=0; i<m_curThreads; i++){
         if (m_thread_pool.thread_info[i].proc == NULL){
             m_thread_pool.thread_info[i].proc = func;

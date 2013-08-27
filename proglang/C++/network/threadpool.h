@@ -26,10 +26,9 @@ class CThreadPool{
 public:
     
     CThreadPool();
+    CThreadPool(int maxThreads);
     CThreadPool(int minThreads,int maxThreads);
     ~CThreadPool();
-    
-    void destroy_pool();    
 
     void create_thread_pool();
     void set_thread_attr(int detached,int scope);
@@ -47,6 +46,7 @@ private:
     int m_minThreads;
     int m_maxThreads;
     int m_curThreads;
+    int m_taskNum;
 
     pthread_attr_t m_attr;
     int            m_detached;
