@@ -10,7 +10,7 @@ void process(void *args)
 
 int main(int argc, char *argv[])
 {
-    CThreadPool threadpool(1,1);    
+    CThreadPool threadpool(2);    
     threadpool.register_task(process,NULL);
     
     while(1){
