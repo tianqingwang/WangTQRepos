@@ -90,44 +90,6 @@ void *CThreadPool::worker_thread(void *args)
     }
 }
 
-#if 0
-void *CThreadPool::manage_thread(void *args)
-{
-    
-    sleep(MANAGE_INTERVAL);
-    CThreadPool *pTP = (CThreadPool*)args;
-    
-    do{
-        if (pTP->get_pool_status() == 0){
-            do{
-                if (pTP->del_thread() == 0){
-                    break;
-                }
-            }while(1);
-        }
-        sleep(MANAGE_INTERVAL);
-    }while(!pTP->m_thread_pool.shutdown);
-}
-
-
-int CThreadPool::get_pool_status()
-{
-    float busy_num = 0.0;
-    int i = 0;
- 
-    for (i=0; i<m_curThreads; i++){
-        if (m_thread_pool.thread_info[i].is_busy){
-            busy_num ++;
-        }
-    }
-
-    if ((busy_num/m_curThreads) < BUSY_THRESHOLD){
-        return 0;
-    }
-    
-    return 1;
-}
-#endif
 
 int CThreadPool::get_thread_by_id(int id)
 {
@@ -143,70 +105,6 @@ int CThreadPool::get_thread_by_id(int id)
 }
 
 
-#if 0
-bool CThreadPool::add_thread()
-{
-    if (m_curThreads >= m_maxThreads){
-        return false;
-    }
-
-    printf("add new thread\n");    
-    
-
-    thread_info_t *new_thread= &m_thread_pool.thread_info[m_curThreads];
-    
-    if (new_thread == NULL){
-        return false;
-    }
-    
-    pthread_mutex_lock(&m_thread_pool.pool_lock);
-    m_curThreads ++;
-    pthread_mutex_unlock(&m_thread_pool.pool_lock);
-    
-    pthread_create(&new_thread->thread_id,&m_attr, &CThreadPool::worker_thread,(void*)this);
-    
-    new_thread->is_busy = true;
-}
-
-bool CThreadPool::del_thread()
-{
-    if (m_curThreads <= m_minThreads){
-        return false;
-    }
-
-    if (m_thread_pool.thread_info[m_curThreads-1].is_busy){
-        return false; 
-    }
-    
-    pthread_mutex_lock(&m_thread_pool.pool_lock); 
-    m_curThreads--;
-    pthread_mutex_unlock(&m_thread_pool.pool_lock);
-    
-    kill(m_thread_pool.thread_info[m_curThreads].thread_id, SIGKILL);
-
-}
-
-#endif
-
-#if 0
-void CThreadPool::pool_close()
-{   
-    int i = 0;
-
-    if (m_detached == PTHREAD_CREATE_JOINABLE){
-        
-        m_thread_pool.shutdown = 1;
-        
-        for (i=0; i<m_curThreads; i++){
-            pthread_join(m_thread_pool.thread_info[i].thread_id,NULL);
-        }
-    } 
-    else{
-        /*detached threads*/
-        m_thread_pool.shutdown = 1;
-    }
-}
-#endif
 
 void CThreadPool::register_task(process_callback func, void *args)
 {
