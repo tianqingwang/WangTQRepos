@@ -34,20 +34,21 @@ CThreadPool::~CThreadPool()
 {
     pthread_mutex_destroy(&m_thread_pool.pool_lock);
     
-    DestroyPool();
+    destroy_pool();
 }
 
-void CThreadPool::DestroyPool()
+void CThreadPool::destroy_pool()
 {
     int i;
     
     for (i=0; i<m_curThreads; i++){
-        kill(m_thread_pool.thread_info[i].thread_id,SIGKILL); 
+//        kill(m_thread_pool.thread_info[i].thread_id,SIGKILL); 
+          m_thread_pool.thread_info[i].stopflag = 1;        
     } 
 
-    kill(m_manage_id, SIGKILL);
+    m_thread_pool.shutdown = 1; /*kill manage thread*/ 
     
-    delete [] m_thread_pool.thread_info;
+    free(m_thread_pool.thread_info);
     
     m_curThreads = 0;
     m_minThreads = 0;
@@ -58,7 +59,7 @@ void CThreadPool::create_thread_pool()
 {
     int i=0;
 
-    m_thread_pool.thread_info = new thread_info_t[m_maxThreads];
+    m_thread_pool.thread_info = (thread_info_t*)malloc(sizeof(thread_info_t)*m_maxThreads);
     
     for (i=0; i<m_minThreads; i++){
         m_thread_pool.thread_info[i].proc = NULL;
@@ -90,10 +91,10 @@ void *CThreadPool::worker_thread(void *args)
     
    
     work_thread_id = pthread_self();
-    printf("work_thread_id = %d\n",work_thread_id);
+    printf("work_thread_id = 0x%x\n",work_thread_id);
     index = pTP->get_thread_by_id(work_thread_id);
 
-    while(!pTP->m_thread_pool.shutdown)
+    while(!pTP->m_thread_pool.thread_info[index].stopflag)
     {
         if (pTP->m_thread_pool.thread_info[index].proc != NULL){
             pTP->m_thread_pool.thread_info[index].proc(pTP->m_thread_pool.thread_info[index].args);
@@ -107,17 +108,18 @@ void *CThreadPool::manage_thread(void *args)
 {
     
     sleep(MANAGE_INTERVAL);
+    CThreadPool *pTP = (CThreadPool*)args;
     
     do{
-        if (((CThreadPool *)args)->get_pool_status() == 0){
+        if (pTP->get_pool_status() == 0){
             do{
-                if (((CThreadPool*)args)->del_thread() == 0){
+                if (pTP->del_thread() == 0){
                     break;
                 }
             }while(1);
         }
         sleep(MANAGE_INTERVAL);
-    }while(1);
+    }while(!pTP->m_thread_pool.shutdown);
 }
 
 
@@ -214,7 +216,7 @@ void CThreadPool::register_task(process_callback func, void *args)
             m_thread_pool.thread_info[i].proc = func;
             m_thread_pool.thread_info[i].args = args;
             m_thread_pool.thread_info[i].is_busy = true;
-            
+            m_thread_pool.thread_info[i].stopflag = 0; 
             break;
         }
     }

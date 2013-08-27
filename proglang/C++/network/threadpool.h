@@ -11,6 +11,7 @@ typedef struct thread_info_s{
     bool               is_busy;
     process_callback   proc;
     void               *args;
+    int                stopflag;
 }thread_info_t;
 
 typedef struct thread_pool_s{
@@ -28,7 +29,7 @@ public:
     CThreadPool(int minThreads,int maxThreads);
     ~CThreadPool();
     
-    void DestroyPool();    
+    void destroy_pool();    
 
     void create_thread_pool();
     void set_thread_attr(int detached,int scope);
