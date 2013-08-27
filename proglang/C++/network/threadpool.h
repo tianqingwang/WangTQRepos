@@ -1,14 +1,11 @@
 #include <pthread.h>
 #include <string.h>
 
-#define BUSY_THRESHOLD   0.5
-#define MANAGE_INTERVAL  5
 
 typedef void (*process_callback)(void *args);
 
 typedef struct thread_info_s{
     pthread_t          thread_id;
-    bool               is_busy;
     process_callback   proc;
     void               *args;
     int                stopflag;
@@ -25,33 +22,22 @@ typedef struct thread_pool_s{
 class CThreadPool{
 public:
     
-    CThreadPool();
     CThreadPool(int maxThreads);
-    CThreadPool(int minThreads,int maxThreads);
     ~CThreadPool();
 
     void create_thread_pool();
     void set_thread_attr(int detached,int scope);
-
+    int  get_thread_by_id(int id);
     static void *worker_thread(void *args);
-    static void *manage_thread(void *args);
 
-    int   get_pool_status();
-    int   get_thread_by_id(int id);
-    bool  add_thread();
-    bool  del_thread();
-    void  pool_close();
     void  register_task(process_callback Func,void *args);
 private:
-    int m_minThreads;
     int m_maxThreads;
     int m_curThreads;
-    int m_taskNum;
 
     pthread_attr_t m_attr;
     int            m_detached;
     int            m_scope;
 
     thread_pool_t  m_thread_pool;
-    pthread_t      m_manage_id;
 };

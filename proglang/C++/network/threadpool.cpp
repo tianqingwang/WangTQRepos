@@ -6,17 +6,10 @@
 #include <errno.h>
 #include "threadpool.h"
 
-CThreadPool::CThreadPool()
-{  /*default*/
-   m_maxThreads = 2; 
-   CThreadPool(2,2);
-}
-
 CThreadPool::CThreadPool(int maxThreads)
 {
-    m_minThreads = maxThreads;
     m_maxThreads = maxThreads;
-    m_curThreads = maxThreads;
+    m_curThreads = 0;
 
     m_thread_pool.shutdown = 0;
     
@@ -24,25 +17,6 @@ CThreadPool::CThreadPool(int maxThreads)
     set_thread_attr(PTHREAD_CREATE_DETACHED, PTHREAD_SCOPE_SYSTEM);
     pthread_mutex_init(&m_thread_pool.pool_lock,NULL);
     
-    create_thread_pool();
-}
-
-CThreadPool::CThreadPool(int minThreads,int maxThreads)
-{
-    m_minThreads = minThreads; 
-    m_maxThreads = maxThreads;
-    m_curThreads = m_minThreads;
-  
-    m_taskNum    = 0;
-    
-    m_thread_pool.shutdown = 0;
-
-    pthread_attr_init(&m_attr);
-   
-    set_thread_attr(PTHREAD_CREATE_DETACHED, PTHREAD_SCOPE_SYSTEM); 
-    
-    pthread_mutex_init(&m_thread_pool.pool_lock,NULL);
-
     create_thread_pool();
 }
 
@@ -64,7 +38,6 @@ CThreadPool::~CThreadPool()
     delete [] m_thread_pool.thread_info;
     m_thread_pool.thread_info = NULL;
 
-    m_minThreads = 0;
     m_maxThreads = 0;
     m_curThreads = 0;
     
@@ -76,19 +49,16 @@ void CThreadPool::create_thread_pool()
 {
     int i=0;
     m_thread_pool.thread_info = NULL;
-    printf("the address=%p\n",m_thread_pool.thread_info);
 
     m_thread_pool.thread_info = new thread_info_t[m_maxThreads];
      
-    for (i=0; i<m_minThreads; i++){
+    for (i=0; i<m_maxThreads; i++){
         m_thread_pool.thread_info[i].proc = NULL;
         m_thread_pool.thread_info[i].args = NULL;
       
         pthread_create(&m_thread_pool.thread_info[i].thread_id,&m_attr,&CThreadPool::worker_thread,(void*)this);
     }
 
-    /*create manage thread*/
-    pthread_create(&m_manage_id,&m_attr,&CThreadPool::manage_thread,(void*)this);
 }
 
 void CThreadPool::set_thread_attr(int detached,int scope)
@@ -110,17 +80,17 @@ void *CThreadPool::worker_thread(void *args)
    
     work_thread_id = pthread_self();
     index = pTP->get_thread_by_id(work_thread_id);
+    
 
     while(!pTP->m_thread_pool.thread_info[index].stopflag)
     {
         if (pTP->m_thread_pool.thread_info[index].proc != NULL){
             pTP->m_thread_pool.thread_info[index].proc(pTP->m_thread_pool.thread_info[index].args);
-            pTP->m_thread_pool.thread_info[index].is_busy = false;
         }
     }
 }
 
-
+#if 0
 void *CThreadPool::manage_thread(void *args)
 {
     
@@ -157,6 +127,7 @@ int CThreadPool::get_pool_status()
     
     return 1;
 }
+#endif
 
 int CThreadPool::get_thread_by_id(int id)
 {
@@ -171,6 +142,8 @@ int CThreadPool::get_thread_by_id(int id)
     return -1;
 }
 
+
+#if 0
 bool CThreadPool::add_thread()
 {
     if (m_curThreads >= m_maxThreads){
@@ -213,6 +186,8 @@ bool CThreadPool::del_thread()
 
 }
 
+#endif
+
 #if 0
 void CThreadPool::pool_close()
 {   
@@ -236,12 +211,13 @@ void CThreadPool::pool_close()
 void CThreadPool::register_task(process_callback func, void *args)
 {
     int i;
+    
+    m_curThreads ++;
 
     for (i=0; i<m_curThreads; i++){
         if (m_thread_pool.thread_info[i].proc == NULL){
             m_thread_pool.thread_info[i].proc = func;
             m_thread_pool.thread_info[i].args = args;
-            m_thread_pool.thread_info[i].is_busy = true;
             m_thread_pool.thread_info[i].stopflag = 0; 
             break;
         }
