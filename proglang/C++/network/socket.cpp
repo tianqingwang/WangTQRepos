@@ -22,10 +22,9 @@ bool CSock::Create(int domain, int type, int protocol)
 }
 
 /*purpose: setup socket descriptor and bind to address.*/
-bool CSock::Create(const char *sIP,const short nPort, int domain, int type, int protocol)
+bool CSock::Create(char *sIP,const short nPort, int domain, int type, int protocol)
 {
     struct sockaddr_in sockAddr;
-    
     /*get a socket descriptor*/
     m_sockfd = socket(domain,type,protocol);
 #ifdef DEBUG
@@ -89,6 +88,22 @@ bool CSock::Listen(int backlog){
 #endif
     
     return ret == 0 ? true:false;
+}
+
+int CSock::Connect(char *sIP, int nPort)
+{
+    int nret;
+    
+    struct sockaddr_in addr;
+    int  nlen = sizeof(addr);
+    
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(nPort);
+    inet_pton(AF_INET,sIP,&addr.sin_addr);
+    
+    nret = connect(m_sockfd,(struct sockaddr*)&addr,nlen);
+    
+    return nret;
 }
 
 int  CSock::Connect(const struct sockaddr *serv_addr, int nAddrLen)

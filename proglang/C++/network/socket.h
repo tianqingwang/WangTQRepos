@@ -16,11 +16,12 @@ public:
     ~CSock();/*deconstruct function*/
 	/*polymorphism of function Create()*/
     bool Create(int domain=AF_INET, int type=SOCK_STREAM, int protocol=0); /*setup socket*/
-    bool Create(const char *sIP,const short nPort, int domain=AF_INET, int type=SOCK_STREAM, int protocol=0);
+    bool Create(char *sIP,const short nPort, int domain=AF_INET, int type=SOCK_STREAM, int protocol=0);
 	
     bool SetSockOpt(int level,int optname, const void *optval, int optlen);
     bool Bind(const struct sockaddr *pAddr,int nAddrLen);
     bool Listen(int backlog = 5);
+    int  Connect(char *sIP, int nPort);
     int  Connect(const struct sockaddr *serv_addr, int nAddrLen);
     int  Accept(struct sockaddr *addr, int *nAddrLen);
     
