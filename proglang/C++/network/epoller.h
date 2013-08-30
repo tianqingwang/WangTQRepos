@@ -1,10 +1,24 @@
 #ifndef __C_EPOLLER_H__
 #define __C_EPOLLER_H__
 
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <errno.h>
 #include <sys/epoll.h>
 
-#define MAXEVENTS   (1000)
+#define EPOLL_FD_MAXSIZE       (102400)
+#define EPOLL_EVENTS_MAXSIZE   (10240)
+#define EPOLL_TIMEOUT_MS       (10)
 
+#define BUFSIZE                (1024)
+
+typedef struct event_s{
+    int sockfd;
+    char buffer[BUFSIZE];
+    int  offset;
+    int  len;
+}event_t;
 
 class CEpoller
 {
@@ -12,20 +26,17 @@ public:
     CEpoller();
     ~CEpoller();
     
-    void create(int epoll_size);
-    void destroy();
-    int timed_wait(int milliseconds);
-    
-    /*events*/
-    get_events();
-    set_events();
-    del_events();
-
+    int Init(int epoll_size, int epoll_event_size,int timeout);
+    int AddEpollIO(int fd,unsigned int flag);
+    int ModEpollIO(int fd,unsigned int flag);
+    int DelEpollIO(int fd,unsigned int flag);
+    int EventLoop(int listenfd);
 private:
-    int _epfd;
-    int _epoll_size;
-    int _max_events;
-    struct epoll_event *_events;
+    int m_epfd;  /*epoll descriptor*/
+    int m_timeout;
+    int m_epollsize;
+    int m_epolleventsize;
+    struct epoll_event *m_events;
 };
 
 #endif
