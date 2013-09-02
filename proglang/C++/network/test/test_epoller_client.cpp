@@ -1,9 +1,11 @@
 #include "socket.h"
+#include <string.h>
+#include <stdio.h>
 
 int main(int argc, char *argv[])
 {
     CSock client_sock;
-    
+    char buf[]="hi,it's me!";
     struct sockaddr_in servaddr;
     int addrlen = sizeof(servaddr);
     char msg[]="hello,world!";
@@ -15,7 +17,9 @@ int main(int argc, char *argv[])
     client_sock.Create();
     client_sock.Connect(sIP,nPort);
     
-
+//    client_sock.Send(client_sock.GetSocket(),buf,strlen(buf));
+    client_sock.Receive(client_sock.GetSocket(),recvline,1024);
+    printf("%s\n",recvline);
 #if 0    
     sockfd = socket(AF_INET,SOCK_STREAM,0);
     if (sockfd == -1){

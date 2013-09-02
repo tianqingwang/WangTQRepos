@@ -2,6 +2,9 @@
 #include <fcntl.h>
 #include "epoller.h"
 
+
+char buf[1024];
+
 CEpoller::CEpoller()
     :m_epfd(-1)
     ,m_timeout(EPOLL_TIMEOUT_MS)
@@ -132,7 +135,9 @@ int CEpoller::EventLoop()
             }
             else{
                 /*handle read or write*/
-                
+                if (HandleReadWrite(m_events[i].data.fd,m_events[i].events) < 0){
+                    continue;
+                }
             }
             
         }
@@ -166,7 +171,51 @@ int CEpoller::HandleAccept()
     connfd = accept(m_sockfd,(struct sockaddr*)&clientaddr,&clientlen);
     printf("connfd = %d\n",connfd);
     if (connfd > 0){
-        AddEpollIO(connfd,EPOLLIN|EPOLLET);
+        AddEpollIO(connfd,EPOLLOUT|EPOLLET);
     }
 }
+
+int CEpoller::HandleReadWrite(int sockfd,int events)
+{
+    if (sockfd < 0){
+        return -1;
+    }
+    
+    if (events & EPOLLIN){
+        /*read events*/
+        int read_bytes;
+        /*to do: need buffer queue to read all data if 
+          the sent size by client is larger than the size of received buffer.
+        */
+        read_bytes = read(sockfd,buf,1024);
+        if (read_bytes < 0){
+            if (errno != EAGAIN){
+                close(sockfd);
+                DelEpollIO(sockfd,0);
+            }
+        }
+        else if (read_bytes == 0){
+            close(sockfd);
+            DelEpollIO(sockfd,0);
+        }
+        else{
+            buf[read_bytes] = '\0';
+            printf("received:%s\n",buf);
+        }
+    }
+    else if (events & EPOLLOUT){
+        /*write events*/
+        char writebuf[]="server said: I was sent!";
+        int write_bytes;
+        write_bytes = write(sockfd,writebuf,strlen(writebuf));
+        if (write_bytes < 0){
+            if (errno != EAGAIN){
+                close(sockfd);
+                DelEpollIO(sockfd,0);
+            }
+        }
+        
+    }
+}
+
 

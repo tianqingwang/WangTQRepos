@@ -35,8 +35,7 @@ public:
     void DetachSocket();
     int EventLoop();
     int HandleAccept();
-    int HandleRead();
-    int HandleWrite();
+    int HandleReadWrite(int sockfd,int events);
 private:
     int m_epfd;  /*epoll descriptor*/
     int m_timeout;
