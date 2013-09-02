@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <sys/epoll.h>
+#include "socket.h"
 
 #define EPOLL_FD_MAXSIZE       (102400)
 #define EPOLL_EVENTS_MAXSIZE   (10240)
@@ -30,13 +31,19 @@ public:
     int AddEpollIO(int fd,unsigned int flag);
     int ModEpollIO(int fd,unsigned int flag);
     int DelEpollIO(int fd,unsigned int flag);
-    int EventLoop(int listenfd);
+    void AttachSocket(CSock *socket);
+    void DetachSocket();
+    int EventLoop();
+    int HandleAccept();
+    int HandleRead();
+    int HandleWrite();
 private:
     int m_epfd;  /*epoll descriptor*/
     int m_timeout;
     int m_epollsize;
     int m_epolleventsize;
     struct epoll_event *m_events;
+    int m_sockfd;
 };
 
 #endif

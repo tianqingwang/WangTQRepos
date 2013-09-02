@@ -1,4 +1,5 @@
 #include <string.h>
+#include <fcntl.h>
 #include "epoller.h"
 
 CEpoller::CEpoller()
@@ -47,8 +48,14 @@ int CEpoller::Init(int epoll_size, int epoll_event_size,int timeout)
 int CEpoller::AddEpollIO(int fd, unsigned int flag)
 {
     struct epoll_event ev;
+    int ctrl_flag;
     
     memset((void*)&ev,0,sizeof(ev));
+    
+    /*set non-blocking*/
+    fcntl(fd,F_GETFL,ctrl_flag);
+    ctrl_flag |= O_NONBLOCK;
+    fcntl(fd,F_SETFL,ctrl_flag);
     
     ev.data.fd = fd;
     ev.events  = flag;
@@ -92,16 +99,17 @@ int CEpoller::DelEpollIO(int fd, unsigned int flag)
     return 0;
 }
 
-int CEpoller::EventLoop(int listenfd)
+int CEpoller::EventLoop()
 {
     int sockfd;
     int nfds;
     int i;
     
-    AddEpollIO(listenfd,EPOLLIN);
+    AddEpollIO(m_sockfd,EPOLLIN);
     
     for(;;){
         nfds = epoll_wait(m_epfd,m_events,m_epolleventsize,m_timeout);
+        
         if (nfds < 0){
             if (errno == EINTR){
                 continue;
@@ -109,7 +117,7 @@ int CEpoller::EventLoop(int listenfd)
             
             return -1;
         }
-#if 0        
+#if 1        
         for (i=0; i<nfds; i++){
             if (m_events[i].events & (EPOLLERR | EPOLLHUP)){
                 close(m_events[i].data.fd);
@@ -117,12 +125,14 @@ int CEpoller::EventLoop(int listenfd)
                 continue;
             }
             
-            if (m_events[i].data.fd == listenfd){
+            if (m_events[i].data.fd == m_sockfd){
                 /*accept*/
                 
+                HandleAccept();
             }
             else{
                 /*handle read or write*/
+                
             }
             
         }
@@ -130,8 +140,33 @@ int CEpoller::EventLoop(int listenfd)
     }
 }
 
-void EventSetCallback()
+void CEpoller::AttachSocket(CSock *socket)
 {
+    if (socket == NULL){
+        m_sockfd = -1;
+        return;
+    }
     
+    m_sockfd = socket->GetSocket();
+}
+
+void CEpoller::DetachSocket()
+{
+    if (m_sockfd != -1){
+        DelEpollIO(m_sockfd,0);
+    }
+}
+
+int CEpoller::HandleAccept()
+{
+    int connfd;
+    struct sockaddr_in clientaddr;
+    socklen_t clientlen;
+    
+    connfd = accept(m_sockfd,(struct sockaddr*)&clientaddr,&clientlen);
+    printf("connfd = %d\n",connfd);
+    if (connfd > 0){
+        AddEpollIO(connfd,EPOLLIN|EPOLLET);
+    }
 }
 
