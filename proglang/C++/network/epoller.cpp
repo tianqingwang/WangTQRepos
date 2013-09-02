@@ -108,7 +108,7 @@ int CEpoller::EventLoop()
     int nfds;
     int i;
     
-    AddEpollIO(m_sockfd,EPOLLIN);
+    AddEpollIO(m_sockfd,EPOLLIN);/*accept uses default LT mode*/
     
     for(;;){
         nfds = epoll_wait(m_epfd,m_events,m_epolleventsize,m_timeout);
@@ -120,7 +120,7 @@ int CEpoller::EventLoop()
             
             return -1;
         }
-#if 1        
+     
         for (i=0; i<nfds; i++){
             if (m_events[i].events & (EPOLLERR | EPOLLHUP)){
                 close(m_events[i].data.fd);
@@ -131,7 +131,10 @@ int CEpoller::EventLoop()
             if (m_events[i].data.fd == m_sockfd){
                 /*accept*/
                 
-                HandleAccept();
+                int retval = HandleAccept();
+                if (retval > 0){
+                    AddEpollIO(retval,EPOLLOUT|EPOLLET);
+                }
             }
             else{
                 /*handle read or write*/
@@ -141,7 +144,7 @@ int CEpoller::EventLoop()
             }
             
         }
-#endif
+
     }
 }
 
@@ -169,10 +172,8 @@ int CEpoller::HandleAccept()
     socklen_t clientlen;
     
     connfd = accept(m_sockfd,(struct sockaddr*)&clientaddr,&clientlen);
-    printf("connfd = %d\n",connfd);
-    if (connfd > 0){
-        AddEpollIO(connfd,EPOLLOUT|EPOLLET);
-    }
+    
+    return connfd;
 }
 
 int CEpoller::HandleReadWrite(int sockfd,int events)

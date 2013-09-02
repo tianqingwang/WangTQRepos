@@ -14,12 +14,17 @@
 
 #define BUFSIZE                (1024)
 
-typedef struct event_s{
-    int sockfd;
-    char buffer[BUFSIZE];
-    int  offset;
-    int  len;
-}event_t;
+enum EVENT_ACTION{
+    EVENT_READ = 0,
+    EVENT_WRITE,
+    EVENT_DELETE
+};
+
+struct event{
+    void (*callback)(int sockfd, short events, void *args);
+    short ev_events;
+    void *ev_args;
+};
 
 class CEpoller
 {
@@ -34,6 +39,7 @@ public:
     void AttachSocket(CSock *socket);
     void DetachSocket();
     int EventLoop();
+    void EventSetCallback(struct event *ev, int sockfd, void (*callback)(int,short, void *),void *args);
     int HandleAccept();
     int HandleReadWrite(int sockfd,int events);
 private:
