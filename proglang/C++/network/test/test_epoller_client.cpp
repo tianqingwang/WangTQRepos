@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     int  nPort = 5000;
     
     int i = 0;
-//    for (i=0; i<1000; i++){
+//    for (i=0; i<10; i++){
     client_sock.Create();
     client_sock.Connect(sIP,nPort);
     

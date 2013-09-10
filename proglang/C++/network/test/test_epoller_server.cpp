@@ -48,26 +48,13 @@ int main(int argc, char *argv[])
         printf("epoll_init failed\n");
     }
     
-    
-//    serv_epoll.EventSetCallback(&loop,read_event,EPOLL_READ_FLAG);
-//    serv_epoll.EventSetCallback(&loop,write_event,EPOLL_WRITE_FLAG);
-
-//    connection_t *c = serv_epoll.GetConnection(&loop,serv_sock.GetSocket());
-    connection_t *c = new connection_t;
-    c->fd = serv_sock.GetSocket();
-    c->data = NULL;
-    c->read = NULL;
-    c->write = NULL;
-    printf("server connection c=%p\n",c);
-    serv_epoll.SetNonBlock(c->fd);
-    printf("c->fd=%d,serv_sock->fd=%d\n",c->fd,serv_sock.GetSocket());
-    
-    if (c == NULL){
-        printf("can't add listening socket.");
-        return -1;
-    }
-    serv_epoll.ConnectionAdd(c);
+   
+    event_t *ev = serv_epoll.GetNewEventBuff(&loop);
+    ev->fd = serv_sock.GetSocket();
+    serv_epoll.SetNonBlock(ev->fd);
+    serv_epoll.EventAdd(ev,EPOLLIN);
     serv_epoll.SetListenSocketFD(serv_sock.GetSocket());
+    
     
     serv_epoll.EventLoop(&loop);
     
