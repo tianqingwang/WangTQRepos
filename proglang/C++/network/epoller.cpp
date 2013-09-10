@@ -4,26 +4,20 @@
 #include <time.h>
 #include "epoller.h"
 
-#define THREAD_OPEN   0
-
 char buf[1024];
+
+//void EventAccept(event_t *ev);
 
 CEpoller::CEpoller()
     :m_epfd(-1)
     ,m_timeout(EPOLL_TIMEOUT_MS)
     ,m_epollsize(EPOLL_FD_MAXSIZE)
     ,m_epolleventsize(EPOLL_EVENTS_MAXSIZE)
-#if 0
-    ,m_events(NULL)
-#endif
+    ,m_loop(NULL)
     ,m_events_list(NULL)
     ,accept_event_queue(NULL)
     ,rw_event_queue(NULL)
 {
-#if THREAD_OPEN
-    /*create read/write thread*/
-    pthread_create(&m_threadID,NULL,&CEpoller::workThread,(void*)this);
-#endif
 }
 
 CEpoller::~CEpoller()
@@ -32,28 +26,24 @@ CEpoller::~CEpoller()
         close(m_epfd);
         m_epfd = -1;
     }
-
-#if 0    
-    if (m_events){
-        delete [] m_events;
-        m_events = NULL;
-    }
-#endif
     
     if (m_events_list){
         delete [] m_events_list;
         m_events_list = NULL;
     }
     
+    if (m_loop){
+        m_loop= NULL;
+    }
     
-
-#if THREAD_OPEN    
-    pthread_join(m_threadID,NULL);
-#endif
 }
 
 int CEpoller::EpollInit(epoller_t *loop)
 {
+    event_t *rev;
+    event_t *wev;
+    int      i;
+
     if (m_epfd == -1){
         m_epfd = epoll_create(loop->connection_n/2);
         
@@ -90,13 +80,26 @@ int CEpoller::EpollInit(epoller_t *loop)
         return -1;
     }
     
+    /*initialize the read events*/
+    rev = loop->read_events;
+    for (i=0; i<loop->connection_n; i++){
+        rev[i].close = 1;
+        rev[i].accept = 1;
+    }
+    
     loop->write_events   = new event_t[loop->connection_n];
     if (!loop->write_events){
         return -1;
     }
     
+    wev = loop->write_events;
+    for (i=0; i<loop->connection_n; i++){
+        wev[i].close = 1;
+        
+    }
     
-    int i = loop->connection_n;
+    
+    i = loop->connection_n;
     connection_t *c = loop->connections;
     connection_t *next;
     
@@ -114,6 +117,8 @@ int CEpoller::EpollInit(epoller_t *loop)
     
     loop->free_connections = next;
     loop->free_connection_n = loop->connection_n;
+    
+    m_loop = loop;
     
     return 0;
 }
@@ -173,29 +178,29 @@ int CEpoller::EventTimedWait(epoller_t *loop,int timeout)
         
         if (revents &(EPOLLERR | EPOLLHUP)){
             /*todo: maybe need to log*/
+            continue;
         }
-        
-        if ((revents & (EPOLLERR | EPOLLHUP)) && (revents &(EPOLLIN|EPOLLOUT)) == 0)
-        {
-            /*???*/
-            revents |= EPOLLIN|EPOLLOUT;
-        }
-        
+       
         rev = conn->read;
         
         if (revents & EPOLLIN){
-            if (rev->accept){
-                PushEventToQueue(rev,accept_event_queue);
+            if (conn->fd == m_listening_fd){
+                //rev->handler = EventAccept;
+                printf("push to accept_event_queue\n");
+                rev->accept = 1;
+                PushEventToQueue(rev,&accept_event_queue);
             }
             else{
-                PushEventToQueue(rev,rw_event_queue);
+                printf("push to read event queue\n");
+                PushEventToQueue(rev,&rw_event_queue);
             }
         }
         
         wev = conn->write;
         
         if (revents &EPOLLOUT){
-            PushEventToQueue(wev,rw_event_queue);
+            printf("push to write event queue\n");
+            PushEventToQueue(wev,&rw_event_queue);
         }
     }
     
@@ -204,44 +209,75 @@ int CEpoller::EventTimedWait(epoller_t *loop,int timeout)
     return 0;
 }
 
-void CEpoller::EventProcess(epoller_t *loop, event_t *queue)
+void CEpoller::EventProcess(epoller_t *loop, event_t **queue)
 {
     event_t *event;
     
+    printf("queue address=%p\n",*queue);
+    
     for(;;){
-        event = queue;
+        event = *queue;
         if (event == NULL){
+            printf("event == NULL now\n");
             return;
         }
         
         /*delete event from queue*/
-        queue = queue->next;
-        event->next = NULL;
-        
-        if (queue){
-            queue->prev = NULL;
+        printf("event=%p\n",event);
+        *queue = event->next;
+        event->next = NULL;     
+//        event->handler(event);
+        if (event->accept){
+            EventAccept(event);
         }
-        
-        event->handler(event);
+        else{
+            EventRead(event);
+        }
     }
 }
+
+void CEpoller::EventRead(event_t *ev)
+{
+    connection_t *c;
+    c = (connection_t*)ev->data;
+    printf("eventread: c->fd = %d\n",c->fd);
+    buf[0] = 0;
+    int readbytes = read(c->fd,buf,1024);
+    
+    if (readbytes < 0){
+        printf("read error\n");
+        return;
+    }
+    
+    if (readbytes == 0){
+        return;
+    }
+    
+    printf("server recv: %s\n",buf);
+    
+}
+
+void CEpoller::EventWrite(event_t *ev)
+{
+    connection_t *c;
+    c = (connection_t*)ev->data;
+    
+    
+}
+
 
 int CEpoller::ConnectionAdd(connection_t *c)
 {
     struct epoll_event ee;
     
-    ee.events   = EPOLLIN|EPOLLOUT|EPOLLET;
+    ee.events   = EPOLLIN | EPOLLET;
     ee.data.ptr = (void*)c;
     
     if (epoll_ctl(m_epfd,EPOLL_CTL_ADD,c->fd,&ee) == -1){
         /*todo: write something to log*/
         return -1;
     }
- 
-#if 0 
-    c->read->active  = 1;
-    c->write->active = 1;
-#endif    
+  
     return 0;
 }
 
@@ -306,17 +342,6 @@ int CEpoller::EventDel(event_t *ev, int event)
 void CEpoller::EventSetCallback(epoller_t *loop,event_handler_t callback, int flag)
 {
     connection_t  *c;
-
-#if 0    
-    c = loop->connections;
-    
-    if (flag & EPOLL_READ_FLAG){
-        c->read->handler = callback;
-    }
-    else if (flag & EPOLL_WRITE_FLAG){
-        c->write->handler = callback;
-    }
-#endif
 }
 
 void CEpoller::EventAccept(event_t *ev)
@@ -328,17 +353,20 @@ void CEpoller::EventAccept(event_t *ev)
     connection_t        *c,*nc;
     
     c = (connection_t*)ev->data;
-    
+    ev->accept = 0;
     /*EPOLLET mode,accept all connection until errno 
       is EAGAIN.
     */
+    printf("do accept\n");
     do{
         socklen = sizeof(sin);
+
         connfd = accept(c->fd,(struct sockaddr*)&sin,&socklen);
-        
+       
         if (connfd == -1){
             if (errno == EAGAIN){
                 /*all connections are done*/
+                printf("c->fd=%d,EAGAIN occurred\n",c->fd);
                 return;
             }
             
@@ -346,49 +374,53 @@ void CEpoller::EventAccept(event_t *ev)
             return;
         }
         
-        nc = new connection_t;
+        nc = GetConnection(m_loop,connfd);
         if (nc == NULL){
             /*maybe need to close socket*/
             /*todo: write something to log*/
+            printf("GetConnection failed\n");
             return ;
         }
-        
+
+       
         /*set non-blocking*/
         if (SetNonBlock(connfd) == -1){
             /*todo: write something to log*/
             
             /*todo: maybe need to close socket*/
-            
+            printf("SetNonBlock failed\n");
             return;
-        }
-        
+        }        
         nc->fd = connfd;
-        nc->read = c->read;
-        nc->write = c->write;
         
+        nc->read->close  = 0;
+        nc->read->active = 1;
+        nc->write->active = 1;
+       
         /*add connection*/
         if (ConnectionAdd(nc) == -1){
             /*todo: write something to log*/
             
             /*close accepted connection*/
-            
+            printf("ConnectionAdd failed\n");
             return;
         }
+        
         
     }while(1);
 }
 
 int CEpoller::SetNonBlock(int fd)
 {
-    int flag;
+    int flags;
     
-    if (fcntl(fd,F_GETFL,flag) == -1){
+    if ((flags = fcntl(fd,F_GETFL,NULL)) < 0){
+        /*todo: write to log*/
         return -1;
     }
     
-    flag |= O_NONBLOCK;
-    
-    if (fcntl(fd,F_SETFL,flag) == -1){
+    if (fcntl(fd,F_SETFL,flags|O_NONBLOCK) == -1){
+        /*todo: write to log*/
         return -1;
     }
     
@@ -403,245 +435,60 @@ void CEpoller::EventLoop(epoller_t *loop)
         EventTimedWait(loop,m_timeout);
         
         if (accept_event_queue){
-            EventProcess(loop,accept_event_queue);
+            
+            EventProcess(loop,&accept_event_queue);
         }
         
         if (rw_event_queue){
-            EventProcess(loop,rw_event_queue);
+            EventProcess(loop,&rw_event_queue);
         }
     }
 }
 
-#if 0
-int CEpoller::Init(int epoll_size, int epoll_event_size,int timeout)
+connection_t *CEpoller::GetConnection(epoller_t *loop,int connfd)
 {
+    connection_t *c;
+    event_t      *rev;
+    event_t      *wev;
     
-    m_epollsize = epoll_size;
-    m_epolleventsize = epoll_event_size;
-    m_timeout   = timeout;
-    /*the size field is ignored since kernel version 2.6.8*/
-    m_epfd = epoll_create(epoll_size);
-    if (m_epfd == -1){
-        return -1;
+    c = loop->free_connections;
+    if (c == NULL){
+        /*todo: write to log*/
+        return NULL;
     }
     
-    m_events = new struct epoll_event[m_epolleventsize];
+    loop->free_connections = (connection_t*)c->data;
+    loop->free_connection_n --;
     
-    if (m_events == NULL){
-        return -1;
-    }
+    rev = c->read;
+    wev = c->write;
     
-    return 0;
+    memset(c,0,sizeof(connection_t));
+    
+    c->read = rev;
+    c->write = wev;
+    c->fd    = connfd;
+    
+    rev->data = c;
+    wev->data = c;
+    
+    return c;
+    
 }
 
-int CEpoller::AddEpollIO(int fd, unsigned int flag)
+void CEpoller::FreeConnection(epoller_t *loop,connection_t *c)
 {
-    struct epoll_event ev;
-    int ctrl_flag;
-    
-    memset((void*)&ev,0,sizeof(ev));
-    
-    /*set non-blocking*/
-    fcntl(fd,F_GETFL,ctrl_flag);
-    ctrl_flag |= O_NONBLOCK;
-    fcntl(fd,F_SETFL,ctrl_flag);
-    
-    ev.data.fd = fd;
-    ev.events  = flag;
-    
-    if (epoll_ctl(m_epfd, EPOLL_CTL_ADD,fd,&ev) < 0){
-        return -1;
+    if (c == NULL){
+        return ;
     }
     
-    return 0;
+    c->data = loop->free_connections;
+    loop->free_connections = c;
+    loop->free_connection_n ++;
 }
 
-int CEpoller::ModEpollIO(int fd, unsigned int flag)
+void CEpoller::SetListenSocketFD(int fd)
 {
-    struct epoll_event ev;
-    
-    memset((void*)&ev,0,sizeof(ev));
-    
-    ev.data.fd = fd;
-    ev.events  = flag;
-    
-    if (epoll_ctl(m_epfd, EPOLL_CTL_MOD,fd,&ev) < 0){
-        return -1;
-    }
-    
-    return 0;
+    m_listening_fd = fd;
 }
-
-int CEpoller::DelEpollIO(int fd, unsigned int flag)
-{
-    struct epoll_event ev;
-    
-    memset((void*)&ev,0,sizeof(ev));
-    
-    ev.data.fd = fd;
-    ev.events  = flag;
-    
-    if (epoll_ctl(m_epfd, EPOLL_CTL_DEL,fd,&ev) < 0){
-        return -1;
-    }
-    
-    return 0;
-}
-
-int CEpoller::EventLoop()
-{
-    int sockfd;
-    int nfds;
-    int i;
-    
-    time_t timep;
-    struct tm *p_tm;
-    
-    AddEpollIO(m_sockfd,EPOLLIN);/*accept uses default LT mode*/
-    
-    for(;;){
-        nfds = epoll_wait(m_epfd,m_events,m_epolleventsize,m_timeout);
-        
-        if (nfds < 0){
-            if (errno == EINTR){
-                continue;
-            }
-            
-            return -1;
-        }
-         
-        for (i=0; i<nfds; i++){
-            
-            if (m_events[i].events & (EPOLLERR | EPOLLHUP)){
-                close(m_events[i].data.fd);
-                DelEpollIO(m_events[i].data.fd,0);
-                continue;
-            }
-            
-            if (m_events[i].data.fd == m_sockfd){
-                /*accept*/
-                
-                int retval = HandleAccept();
-                if (retval > 0){
-                    printf("accept %d\n",retval);
-                    AddEpollIO(retval,EPOLLIN|EPOLLET);
-                }
-            }
-            else{
-                
-#if 0
-                /*handle read or write*/
-                if (HandleReadWrite(m_events[i].data.fd,m_events[i].events) < 0){
-                    continue;
-                }
-#endif  
-#if THREAD_OPEN 
-                if (m_events[i].events & EPOLLIN){
-                    printf("read events\n");
-                    m_list.push_back(m_events[i]);
-                    
-                }
-                else if (m_events[i].events & EPOLLOUT){
-                    printf("write events\n");
-                    m_list.push_back(m_events[i]);
-                    
-                }
-#endif                
-            }
-            
-        }
-
-    }
-}
-
-void CEpoller::AttachSocket(CSock *socket)
-{
-    if (socket == NULL){
-        m_sockfd = -1;
-        return;
-    }
-    
-    m_sockfd = socket->GetSocket();
-}
-
-void CEpoller::DetachSocket()
-{
-    if (m_sockfd != -1){
-        DelEpollIO(m_sockfd,0);
-    }
-}
-
-int CEpoller::HandleAccept()
-{
-    int connfd;
-    struct sockaddr_in clientaddr;
-    socklen_t clientlen;
-    
-    connfd = accept(m_sockfd,(struct sockaddr*)&clientaddr,&clientlen);
-    
-    return connfd;
-}
-
-int CEpoller::HandleReadWrite(int sockfd,int events)
-{
-    if (sockfd < 0){
-        return -1;
-    }
-    
-    if (events & EPOLLIN){
-        /*read events*/
-        int read_bytes;
-        /*to do: need buffer queue to read all data if 
-          the sent size by client is larger than the size of received buffer.
-        */
-        read_bytes = read(sockfd,buf,1024);
-        if (read_bytes < 0){
-            if (errno != EAGAIN){
-                close(sockfd);
-                DelEpollIO(sockfd,0);
-            }
-        }
-        else if (read_bytes == 0){
-            close(sockfd);
-            DelEpollIO(sockfd,0);
-        }
-        else{
-            buf[read_bytes] = '\0';
-            printf("received:%s\n",buf);
-        }
-    }
-    else if (events & EPOLLOUT){
-        /*write events*/
-        char writebuf[]="server said: I was sent!";
-        int write_bytes;
-        write_bytes = write(sockfd,writebuf,strlen(writebuf));
-        if (write_bytes < 0){
-            if (errno != EAGAIN){
-                close(sockfd);
-                DelEpollIO(sockfd,0);
-            }
-        }
-        
-    }
-}
-
-#if THREAD_OPEN
-void *CEpoller::workThread(void *args)
-{
-    CEpoller *pEpoller = (CEpoller*)args;
-    while(1){
-        if (pEpoller->m_list.empty()){
-            continue;
-        }
-        
-        struct epoll_event ev = pEpoller->m_list.front();
-        pEpoller->m_list.pop_front();
-        
-        
-        
-        pEpoller->HandleReadWrite(ev.data.fd,ev.events);
-    }
-}
-#endif
-#endif
 

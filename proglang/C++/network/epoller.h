@@ -13,7 +13,7 @@ using namespace std;
 
 #define EPOLL_FD_MAXSIZE       (102400)
 #define EPOLL_EVENTS_MAXSIZE   (10240)
-#define EPOLL_TIMEOUT_MS       (10)
+#define EPOLL_TIMEOUT_MS       (500)
 
 #define EPOLL_ACCEPT_FLAG    0x01
 #define EPOLL_READ_FLAG      0x02
@@ -30,15 +30,15 @@ typedef void (*event_handler_t)(event_t *ev); /*callback prototype*/
 
 struct event_s{ /*r/w events*/
     void              *data;
-    int               fd;
-    bool              accept;
+    int               accept;
     int               events;
     int               active;
+    int               close;
     event_handler_t   handler;
     
     /*double direction*/
     event_t           *next;
-    event_t           *prev;
+//    event_t           *prev;
 };
 
 struct connection_s{
@@ -59,16 +59,6 @@ struct epoller_s{
     event_t          *write_events;/* all write events array*/
 };
 
-
-#if 0
-struct event{
-    int sockfd;
-    void (*callback)(int sockfd, short events, void *args);
-    short ev_events;
-    void *ev_args;
-};
-#endif
-
 class CEpoller
 {
 public:
@@ -76,18 +66,17 @@ public:
     ~CEpoller();
     
     /*inline*/
-    inline void PushEventToQueue(event_t *ev, event_t *queue){
+    inline void PushEventToQueue(event_t *ev, event_t **queue){
         if (ev != NULL){
-            ev->next = queue;
-            queue->prev = ev;
-            queue = ev;
+            ev->next = *queue;
+            *queue = ev;
         }
     }
     
     int  EpollInit(epoller_t *loop);
     void EpollDone(epoller_t *loop);
     int  EventTimedWait(epoller_t *loop,int timeout);
-    void EventProcess(epoller_t *loop, event_t *queue);
+    void EventProcess(epoller_t *loop, event_t **queue);
     void EventLoop(epoller_t *loop);
     
     int  ConnectionAdd(connection_t *c);
@@ -97,44 +86,30 @@ public:
     int  EventDel(event_t *ev,int event);
     
     void EventAccept(event_t *ev);
+    void EventRead(event_t *ev);
+    void EventWrite(event_t *ev);
     
     void EventSetCallback(epoller_t *loop,event_handler_t callback, int flag);
     
     int  SetNonBlock(int fd);
-#if 0    
-    int Init(int epoll_size, int epoll_event_size,int timeout);
-    int AddEpollIO(int fd,unsigned int flag);
-    int ModEpollIO(int fd,unsigned int flag);
-    int DelEpollIO(int fd,unsigned int flag);
-    void AttachSocket(CSock *socket);
-    void DetachSocket();
-    int EventLoop();
+    void SetListenSocketFD(int fd);
     
-    void EventSetCallback(struct event *ev, int sockfd, void (*callback)(int,short, void *),void *args);
-    int HandleAccept();
-    int HandleReadWrite(int sockfd,int events);
-    static void *workThread(void *args);
-#endif
+    connection_t  *GetConnection(epoller_t *loop,int connfd);
+    void     FreeConnection(epoller_t *loop,connection_t *c);
+
 public:
-#if 0
-    struct epoll_event *m_events;
-#endif
     struct epoll_event *m_events_list;
 private:
     int m_epfd;  /*epoll descriptor*/
-    
+    int m_listening_fd;
     int m_timeout;
     int m_epollsize;
     int m_epolleventsize;
     
+    epoller_t  *m_loop;
+    
     event_t *accept_event_queue;
     event_t *rw_event_queue;
- 
-#if 0 
-    int m_sockfd;
-    list<struct epoll_event> m_list;
-    pthread_t m_threadID;
-#endif
 };
 
 #endif

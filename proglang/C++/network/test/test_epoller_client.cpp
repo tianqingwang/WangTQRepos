@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "socket.h"
 #include <string.h>
 #include <stdio.h>
@@ -18,11 +19,15 @@ int main(int argc, char *argv[])
 //    for (i=0; i<1000; i++){
     client_sock.Create();
     client_sock.Connect(sIP,nPort);
+    
     client_sock.Send(client_sock.GetSocket(),buf,strlen(buf));
+    
+    client_sock.Send(client_sock.GetSocket(),msg,strlen(msg));
+
 //    }
 //    client_sock.Send(client_sock.GetSocket(),buf,strlen(buf));
 //    client_sock.Receive(client_sock.GetSocket(),recvline,1024);
 //    printf("%s\n",recvline);
-  
+    client_sock.Close();
     return 0;
 }
