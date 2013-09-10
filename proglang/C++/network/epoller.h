@@ -13,7 +13,7 @@ using namespace std;
 
 #define EPOLL_FD_MAXSIZE       (102400)
 #define EPOLL_EVENTS_MAXSIZE   (10240)
-#define EPOLL_TIMEOUT_MS       (500)
+#define EPOLL_TIMEOUT_MS       (10)
 
 #define EPOLL_ACCEPT_FLAG    0x01
 #define EPOLL_READ_FLAG      0x02
@@ -23,46 +23,28 @@ using namespace std;
 #define BUFSIZE                (1024)
 
 typedef struct event_s          event_t;
-typedef struct connection_s     connection_t;
 typedef struct epoller_s        epoller_t;
 
 typedef void (*event_handler_t)(event_t *ev); /*callback prototype*/
 
 struct event_s{ /*r/w events*/
-#if 1
     int               fd;
-#endif
     void              *data;
-    int               accept;
-    int               events;
-    int               active;
-    int               close;
-    event_handler_t   handler;
+//    int               accept;
+//    int               events;
+//    int               active;
+//    int               close;
+//    event_handler_t   handler;
     
-    /*double direction*/
     event_t           *next;
-//    event_t           *prev;
-};
-
-struct connection_s{
-    int         fd;
-#if 1
-    void       *data;
-    event_t    *read;
-    event_t    *write;
-#endif
 };
 
 struct epoller_s{
     int               connection_n;
     int               event_size;
-    connection_t     *connections; /*all connections array*/
-    connection_t     *free_connections; /*connections that can be used*/
-    int               free_connection_n; /*number of connections that can be used*/
-#if 1    
-    event_t          *read_events; /* all read events array*/
-    event_t          *write_events;/* all write events array*/
-#endif
+    event_t          *rwEvents;
+    event_t          *free_events;
+    int               free_event_n;
 };
 
 class CEpoller
@@ -85,9 +67,6 @@ public:
     void EventProcess(epoller_t *loop, event_t **queue);
     void EventLoop(epoller_t *loop);
     
-    int  ConnectionAdd(connection_t *c);
-    int  ConnectionDel(connection_t *c);
-    
     int  EventAdd(event_t *ev,int event);
     int  EventDel(event_t *ev,int event);
     
@@ -95,13 +74,11 @@ public:
     void EventRead(event_t *ev);
     void EventWrite(event_t *ev);
     
-    void EventSetCallback(epoller_t *loop,event_handler_t callback, int flag);
-    
     int  SetNonBlock(int fd);
     void SetListenSocketFD(int fd);
     
-    connection_t  *GetConnection(epoller_t *loop,int connfd);
-    void     FreeConnection(epoller_t *loop,connection_t *c);
+    event_t *GetNewEventBuff(epoller_t *loop);
+    void     FreeEventBuff(epoller_t *loop,event_t *ev);
 
 public:
     struct epoll_event *m_events_list;
