@@ -29,6 +29,9 @@ typedef struct epoller_s        epoller_t;
 typedef void (*event_handler_t)(event_t *ev); /*callback prototype*/
 
 struct event_s{ /*r/w events*/
+#if 1
+    int               fd;
+#endif
     void              *data;
     int               accept;
     int               events;
@@ -43,9 +46,11 @@ struct event_s{ /*r/w events*/
 
 struct connection_s{
     int         fd;
+#if 1
     void       *data;
     event_t    *read;
     event_t    *write;
+#endif
 };
 
 struct epoller_s{
@@ -54,9 +59,10 @@ struct epoller_s{
     connection_t     *connections; /*all connections array*/
     connection_t     *free_connections; /*connections that can be used*/
     int               free_connection_n; /*number of connections that can be used*/
-    
+#if 1    
     event_t          *read_events; /* all read events array*/
     event_t          *write_events;/* all write events array*/
+#endif
 };
 
 class CEpoller

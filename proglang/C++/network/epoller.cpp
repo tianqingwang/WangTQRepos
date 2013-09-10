@@ -148,6 +148,7 @@ int CEpoller::EventTimedWait(epoller_t *loop,int timeout)
     int          nevents;
     int          i;
     connection_t *conn;
+    event_t      *conn_ev;
     uint32_t     revents;
     event_t      *rev;  /*read event*/
     event_t      *wev;  /*write event*/
@@ -173,6 +174,7 @@ int CEpoller::EventTimedWait(epoller_t *loop,int timeout)
     printf("nevents=%d\n",nevents);
     
     for (i=0; i<nevents; i++){
+#if 0
         conn    = (connection_t*)m_events_list[i].data.ptr;
         revents = m_events_list[i].events;
         
@@ -202,8 +204,41 @@ int CEpoller::EventTimedWait(epoller_t *loop,int timeout)
             printf("push to write event queue\n");
             PushEventToQueue(wev,&rw_event_queue);
         }
+#endif
+
+        conn_ev = (event_t*)m_events_list[i].data.ptr;
+        revents = m_events_list[i].events;
+        if (revents &(EPOLLERR | EPOLLHUP)){
+            continue;
+        }
+        
+        if (conn_ev->fd == m_listening_fd){
+            PushEventToQueue(conn_ev,&accept_event_queue);
+        }
+        else{
+            PushEventToQueue(conn_ev,&rw_event_queue);
+        }
+        #if 0
+        if (revents & EPOLLIN){
+            if (conn_ev->fd = m_listening_fd){
+                printf("accept:conn_ev=%p\n",conn_ev);
+                PushEventToQueue(conn_ev,&accept_event_queue);
+            }
+            else{
+                printf("read:conn_ev=%p\n",conn_ev);
+                conn_ev->accept = 0;
+                PushEventToQueue(conn_ev,&rw_event_queue);
+            }
+        }
+        
+        if (revents & EPOLLOUT){
+            printf("push to write event queue\n");
+            conn_ev->accept = 0;
+            PushEventToQueue(conn_ev,&rw_event_queue);
+        }
+        #endif
     }
-    
+        
     /*todo: add unlock for multi-process or multi-threads*/
     
     return 0;
@@ -225,9 +260,9 @@ void CEpoller::EventProcess(epoller_t *loop, event_t **queue)
         /*delete event from queue*/
         printf("event=%p\n",event);
         *queue = event->next;
-        event->next = NULL;     
+        
 //        event->handler(event);
-        if (event->accept){
+        if (event->fd == m_listening_fd){
             EventAccept(event);
         }
         else{
@@ -238,6 +273,7 @@ void CEpoller::EventProcess(epoller_t *loop, event_t **queue)
 
 void CEpoller::EventRead(event_t *ev)
 {
+#if 0
     connection_t *c;
     c = (connection_t*)ev->data;
     printf("eventread: c->fd = %d\n",c->fd);
@@ -254,7 +290,20 @@ void CEpoller::EventRead(event_t *ev)
     }
     
     printf("server recv: %s\n",buf);
+#endif
     
+    memset(buf,0,sizeof(buf));
+    int readbytes = read(ev->fd,buf,1024);
+    if (readbytes < 0){
+        printf("read error\n");
+        return;
+    }
+    
+    if (readbytes == 0){
+        return;
+    }
+    
+    printf("server recv: %s\n",buf);
 }
 
 void CEpoller::EventWrite(event_t *ev)
@@ -288,7 +337,8 @@ int CEpoller::EventAdd(event_t *ev,int event)
     event_t            *e;
     connection_t       *c;
     uint32_t           revent;
-    
+
+#if 0    
     c = (connection_t*)ev->data;
     
     if (event & EPOLLIN){
@@ -312,6 +362,13 @@ int CEpoller::EventAdd(event_t *ev,int event)
     
     if (epoll_ctl(m_epfd,op,c->fd,&ee) == -1){
         /*todo: write something to log*/
+        return -1;
+    }
+#endif
+
+    ee.data.ptr = (void*)ev;
+    ee.events = event | EPOLLET;
+    if (epoll_ctl(m_epfd,EPOLL_CTL_ADD,ev->fd,&ee) == -1){
         return -1;
     }
 }
@@ -351,7 +408,8 @@ void CEpoller::EventAccept(event_t *ev)
     int                 connfd;
     socklen_t           socklen;
     connection_t        *c,*nc;
-    
+    struct epoll_event  ee;
+#if 0    
     c = (connection_t*)ev->data;
     ev->accept = 0;
     /*EPOLLET mode,accept all connection until errno 
@@ -360,7 +418,7 @@ void CEpoller::EventAccept(event_t *ev)
     printf("do accept\n");
     do{
         socklen = sizeof(sin);
-
+        
         connfd = accept(c->fd,(struct sockaddr*)&sin,&socklen);
        
         if (connfd == -1){
@@ -408,6 +466,29 @@ void CEpoller::EventAccept(event_t *ev)
         
         
     }while(1);
+#endif
+    
+    printf("do accept,ev->fd=%d\n",ev->fd);
+    ev->accept = 0;
+    do{
+        socklen = sizeof(sin);
+        connfd = accept(ev->fd,(struct sockaddr*)&sin,&socklen);
+        if (connfd < 0){
+            return;
+        }
+        printf("connfd = %d\n",connfd);
+        SetNonBlock(connfd);
+        
+        event_t *new_event = new event_t;
+        new_event->fd = connfd;
+        new_event->accept = 0;
+        printf("new_event:%p\n",new_event);
+        ee.data.ptr = (void*)new_event;
+        ee.events   = EPOLLIN | EPOLLET;
+        epoll_ctl(m_epfd,EPOLL_CTL_ADD,connfd,&ee);
+        
+    }while(1);
+
 }
 
 int CEpoller::SetNonBlock(int fd)
