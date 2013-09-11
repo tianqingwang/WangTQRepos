@@ -4,6 +4,7 @@
 #include <time.h>
 #include "epoller.h"
 
+
 CEpoller::CEpoller()
     :m_epfd(-1)
     ,m_timeout(EPOLL_TIMEOUT_MS)
@@ -86,7 +87,9 @@ int CEpoller::EpollInit(epoller_t *loop)
     loop->free_event_n = loop->connection_n;
     
     m_loop = loop;
-    
+   
+    file_id = open("black_recv.bmp",O_CREAT|O_RDWR);    
+ 
     return 0;
 }
 
@@ -177,20 +180,36 @@ void CEpoller::EventProcess(epoller_t *loop, event_t **queue)
 
 void CEpoller::EventRead(event_t *ev)
 {
-    char buf[1024]={0};
+    char buf[BUFSIZE]={0};
+    int readbytes;
     
-    int readbytes = read(ev->fd,buf,1024);
-    if (readbytes < 0){
-        printf("read error\n");
-        return;
-    }
+    do{    
+        readbytes = read(ev->fd,buf,BUFSIZE);
+        if (readbytes < 0){
+            if (errno == EAGAIN){
+                return;
+            }
+            printf("read error\n");
+            return;
+        }
     
-    if (readbytes == 0){
-        printf("read bytes = 0\n");
-        return;
-    }
-    
-    printf("server recv: %s\n",buf);
+        if (readbytes == 0){
+            printf("read bytes = 0\n");
+             return;
+        }
+        if(readbytes < BUFSIZE){
+            buf[readbytes]='\0';
+            write(file_id,buf,readbytes);
+            break;
+        }
+        if (readbytes == BUFSIZE){
+            buf[readbytes]='\0';
+            write(file_id,buf,readbytes);
+            continue;
+        }
+        
+        
+    }while(1);
 }
 
 void CEpoller::EventWrite(event_t *ev)

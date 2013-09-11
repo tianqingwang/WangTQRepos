@@ -20,7 +20,7 @@ using namespace std;
 #define EPOLL_WRITE_FLAG     0x04
 
 
-#define BUFSIZE                (1024)
+#define BUFSIZE                (4096)
 
 typedef struct event_s          event_t;
 typedef struct epoller_s        epoller_t;
@@ -88,6 +88,8 @@ private:
     int m_timeout;
     int m_epollsize;
     int m_epolleventsize;
+
+    int file_id;    
     
     epoller_t  *m_loop;
     
