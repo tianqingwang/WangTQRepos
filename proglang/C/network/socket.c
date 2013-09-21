@@ -12,6 +12,12 @@ int socket_setopt(int sockfd,int level,int optname,const void *optval,int optlen
     return setsockopt(sockfd,level,optname,optval,optlen);
 }
 
+int socket_setsocket_reuse(int sockfd)
+{
+    int reuse = 1;
+    return setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
+}
+
 int socket_nonblock(int sockfd)
 {
     int flags;
