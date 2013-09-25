@@ -8,10 +8,14 @@
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define NPORT   5000
 #define BACKLOG  5
 #define MAXTHREADS 3
+#define RBUFSIZE   (1024)
+#define WBUFSIZE   (1024)
 
 typedef enum conn_state{
     CONN_STATE_LISTENING = 0x0,
@@ -91,12 +95,17 @@ static CQ_ITEM *cq_pop(CQ *cq){
 
 static LIBEVENT_THREAD *threads;
 struct event_base *main_base;
+
+
 static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base);
+static void conn_set_state(conn *c,CONN_STATE new_state);
+static void conn_close(conn *c);
 void event_handler(int fd, short which, void *arg);
+static int set_socket_nonblock(int fd);
+static int set_socket_reusable(int fd);
+
 int main(int argc, char **argv)
 {
-    struct event *ev_accept;
-    
     main_base = event_init();
     
     int sockfd = socket_setup(NPORT);
@@ -107,14 +116,42 @@ int main(int argc, char **argv)
     
     conn *c = conn_new(sockfd,CONN_STATE_LISTENING,main_base);
     if (c == NULL){
+        fprintf(stderr,"Failed to create socket accept.\n");
         return -1;
     }
     
     
     thread_init(MAXTHREADS,main_base);
     
+    /*wait for threads to setup completely.*/
     usleep(100000);
+    
     event_base_loop(main_base,0);
+    
+    return 0;
+}
+
+static int set_socket_nonblock(int fd)
+{
+    int flag;
+    flag = fcntl(fd,F_GETFL,NULL);
+    if (flag < 0){
+        return -1;
+    }
+    
+    flag |= O_NONBLOCK;
+    
+    if (fcntl(fd,F_SETFL,flag) < 0){
+        return -1;
+    }
+    
+    return 0;
+}
+
+static int set_socket_reusable(int fd)
+{
+    int reuse_on = 1;
+    return setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&reuse_on,sizeof(reuse_on));
 }
 
 int socket_setup(int nPort)
@@ -125,23 +162,33 @@ int socket_setup(int nPort)
     
     listenfd = socket(AF_INET,SOCK_STREAM,0);
     if (listenfd < 0){
+        fprintf(stderr,"Failed to create socket.\n");
         return -1;
     }
     
     /*set socket reuseable*/
-    evutil_make_listen_socket_reuseable(listenfd);
+    if (set_socket_reusable(listenfd) < 0){
+        fprintf(stderr,"Failed to set listening socket re-usable.\n");
+        return -1;
+    }
+    
     /*set socket non-blocking*/
-    evutil_make_socket_nonblocking(listenfd);
+    if (set_socket_nonblock(listenfd) < 0){
+        fprintf(stderr,"Failed to set listening socket non-blocking.\n");
+        return -1;
+    }
     
     memset(&listen_addr,0,sizeof(struct sockaddr_in));
     listen_addr.sin_family      = AF_INET;
     listen_addr.sin_addr.s_addr = INADDR_ANY;
     listen_addr.sin_port        = htons(nPort);
     if (bind(listenfd,(struct sockaddr*)&listen_addr,sizeof(listen_addr)) < 0){
+        fprintf(stderr,"Failed to bind the listening socket fd.\n");
         return -1;
     }
     
     if (listen(listenfd,BACKLOG) < 0){
+        fprintf(stderr,"Failed to set the listening socket to listen.\n");
         return -1;
     }
     
@@ -183,22 +230,104 @@ static void create_worker(void *(*func)(void*),void *arg)
     
 }
 
-static void *worker_libevent(void *arg)
+/*event finite-state machine*/
+static void event_FSM(conn *c)
 {
-    LIBEVENT_THREAD *me = arg;
-    printf("worker_libevent thread_id = 0x%x,me->thread_id=0x%x\n",pthread_self(),me->thread_id);
-    event_base_loop(me->base,0);
-    return NULL;
-}
-
-
-
-int update_event(conn *c,int new_flag)
-{
-    event_del(&c->event);
-    event_set(&c->event,c->fd,new_flag,event_handler,c);
-    event_base_set(c->base,&c->event);
-    event_add(&c->event,0);
+    int stop = 0;
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int connfd;
+    int n = 0;
+    char rbuf[RBUFSIZE];
+    char wbuf[WBUFSIZE];
+    
+    while(!stop){
+        switch(c->state){
+            case CONN_STATE_LISTENING:
+                connfd = accept(c->fd,(struct sockaddr*)&client_addr,&client_len);
+                if (connfd == -1){
+                    if (errno == EAGAIN || errno == EWOULDBLOCK){
+                        stop = 1;
+                    }
+                    else if (errno == EMFILE){/*exceed per-process limit of file descriptions.*/
+                        fprintf(stderr,"Too many opened connections.\n");
+                        stop = 1;
+                    }
+                    else{
+                        fprintf(stderr,"accept error.\n");
+                        stop = 1;
+                    }
+                    break;
+                }
+                
+                if (set_socket_nonblock(connfd) == -1){
+                    fprintf(stderr,"Failed to set NONBLOCK.\n");
+                    close(connfd);
+                    break;
+                }
+                
+                dispatch_conn(connfd,CONN_STATE_READ);
+                
+                stop = 1;
+                
+                break;
+            case CONN_STATE_READ:
+                n = read(c->fd,rbuf,RBUFSIZE);
+                if (n == -1){
+                    if (errno == EAGAIN || errno == EWOULDBLOCK){
+                        //conn_set_state(c,CONN_STATE_WAIT);
+                        break;
+                    }
+                    else{
+                        /*read error, maybe connection dropped.*/
+                        conn_set_state(c,CONN_STATE_CLOSE);
+                        break;
+                    }
+                }
+                else if(n == 0){
+                    conn_set_state(c,CONN_STATE_CLOSE);
+                    break;
+                }
+                else{
+                    /*got data*/
+                    /*fixme: if n==RBUFSIZE*/
+                    rbuf[n] = '\0';
+                    fprintf(stdout,"server received:%s\n",rbuf);
+                    memset(rbuf,0,sizeof(rbuf));
+                }
+                /*for test*/
+                dispatch_conn(c->fd,CONN_STATE_WRITE);
+                stop = 1;
+                break;
+            case CONN_STATE_WRITE:
+                strcpy(wbuf,"hi,I'm server.");
+                n = write(c->fd,wbuf,strlen(wbuf));
+                if (n == -1){
+                    if (errno == EAGAIN || errno == EWOULDBLOCK){
+                        //conn_set_state(c,CONN_STATE_WAIT);
+                        break;
+                    }
+                    else{
+                        conn_set_state(c,CONN_STATE_CLOSE);
+                        break;
+                    }
+                }
+                else if (n == 0){
+                    conn_set_state(c,CONN_STATE_CLOSE);
+                    break;
+                }
+                else{
+                    memset(wbuf,0,sizeof(wbuf));
+                }
+                
+                stop = 1;
+                break;
+            case CONN_STATE_CLOSE:
+                conn_close(c);
+                stop = 1;
+                break;
+        }
+    }
 }
 
 void event_handler(int fd, short which, void *arg)
@@ -211,19 +340,49 @@ void event_handler(int fd, short which, void *arg)
     char buffer[1024];
     int n = 0;
     char sendmsg[] = "Hi,this is server, can you receive me?";
-    
+
+#if 0    
 //    printf("event_handler fd = %d\n",fd);
     switch (c->state){
         case CONN_STATE_LISTENING:
             connfd = accept(c->fd,(struct sockaddr*)&client_addr,&client_len);
-            evutil_make_socket_nonblocking(connfd);
-            printf("connfd = %d\n",connfd);
-            dispatch_conn(connfd,CONN_STATE_READ);
+            /*check connfd*/
+            if (connfd == -1){
+                if (errno == EAGAIN || errno == EWOULDBLOCK){
+                    
+                }
+                else if (errno == EMFILE){/*exceed per-process limit of file descriptions.*/
+                    fprintf(stderr,"Too many opened connections.\n");
+                }
+                else{
+                    fprintf(stderr,"accept error.\n");
+                }
+            }
+            
+            if (set_socket_nonblock(connfd) < 0){
+                close(connfd);
+            }
+            else{
+                printf("connfd = %d\n",connfd);
+                dispatch_conn(connfd,CONN_STATE_READ);
+            }
             break;
         case CONN_STATE_READ:
             
             n = read(c->fd,buffer,1024);
-            if (n > 0){
+            if (n == -1){
+                if (errno == EAGAIN || errno == EWOULDBLOCK){
+                    /*do nothing*/
+                }
+                else{
+                    /*read error,connection dropped.*/
+                    
+                }
+            }
+            else if (n == 0){
+                
+            }
+            else{
                 printf("c->fd = %d received data:%s with thread_id=0x%x\n",c->fd,buffer,pthread_self());
                 memset(buffer,0,1024);
             }
@@ -235,15 +394,23 @@ void event_handler(int fd, short which, void *arg)
             write(c->fd,sendmsg,strlen(sendmsg));
             
             break;
+        case CONN_STATE_CLOSE:
+            conn_close(c);
+            break;
         default:
             break;
     }
+#else
+    event_FSM(c);
+#endif
+    return;
 }
 
 
 static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
 {
     conn *c = malloc(sizeof(conn));
+
     c->fd = fd;
     c->base = base;
     c->state = init_state;
@@ -256,13 +423,41 @@ static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
     else{
         event_set(&c->event,fd,EV_READ|EV_PERSIST,event_handler,(void*)c);
     }
-    
-
     event_base_set(base,&c->event);
+    
     event_add(&c->event,0);
 
-    
     return c;
+}
+
+static void conn_set_state(conn *c,CONN_STATE new_state)
+{
+    if (c != NULL && (new_state >=CONN_STATE_LISTENING && new_state <= CONN_STATE_CLOSE)){
+        if (c->state != new_state){
+            c->state = new_state;
+        }
+    }
+}
+
+static void conn_free(conn *c)
+{
+    if (c != NULL){
+        free(c);
+    }
+}
+
+static void conn_close(conn *c)
+{   
+    if (c != NULL){
+        /*delete event.*/
+        event_del(&c->event);
+        
+        /*close socket*/
+        close(c->fd);
+        
+        /*free the allocated memory.*/
+        conn_free(c);
+    }
 }
 
 static void thread_libevent_process(int fd, short which,void *arg)
@@ -279,14 +474,24 @@ static void thread_libevent_process(int fd, short which,void *arg)
 //    printf("hi, I get it from 0x%x.\n",this->thread_id);
     
     item = cq_pop(&this->new_conn_queue);
+    
     if (item != NULL){
         conn *c = conn_new(item->fd,item->state,this->base);
         if (c == NULL){
-            /*to do sth.*/
+            close(item->fd);
         }
     }
     
     free(item);
+}
+
+static void *worker_libevent(void *arg)
+{
+    LIBEVENT_THREAD *me = arg;
+    
+    event_base_loop(me->base,0);
+    
+    return NULL;
 }
 
 
@@ -331,7 +536,6 @@ int setup_thread(LIBEVENT_THREAD *thread)
         perror("Failed to add event.");
         return -1;
     }
-    
     
     cq_init(&thread->new_conn_queue);
 }
