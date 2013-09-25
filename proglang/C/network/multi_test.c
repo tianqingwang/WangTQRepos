@@ -121,7 +121,7 @@ int main(int argc, char **argv)
     }
     
     
-    thread_init(MAXTHREADS,main_base);
+    thread_init(MAXTHREADS);
     
     /*wait for threads to setup completely.*/
     usleep(100000);
@@ -334,75 +334,11 @@ void event_handler(int fd, short which, void *arg)
 {
     conn *c = (conn*)arg;
     
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
-    int connfd;
-    char buffer[1024];
-    int n = 0;
-    char sendmsg[] = "Hi,this is server, can you receive me?";
-
-#if 0    
-//    printf("event_handler fd = %d\n",fd);
-    switch (c->state){
-        case CONN_STATE_LISTENING:
-            connfd = accept(c->fd,(struct sockaddr*)&client_addr,&client_len);
-            /*check connfd*/
-            if (connfd == -1){
-                if (errno == EAGAIN || errno == EWOULDBLOCK){
-                    
-                }
-                else if (errno == EMFILE){/*exceed per-process limit of file descriptions.*/
-                    fprintf(stderr,"Too many opened connections.\n");
-                }
-                else{
-                    fprintf(stderr,"accept error.\n");
-                }
-            }
-            
-            if (set_socket_nonblock(connfd) < 0){
-                close(connfd);
-            }
-            else{
-                printf("connfd = %d\n",connfd);
-                dispatch_conn(connfd,CONN_STATE_READ);
-            }
-            break;
-        case CONN_STATE_READ:
-            
-            n = read(c->fd,buffer,1024);
-            if (n == -1){
-                if (errno == EAGAIN || errno == EWOULDBLOCK){
-                    /*do nothing*/
-                }
-                else{
-                    /*read error,connection dropped.*/
-                    
-                }
-            }
-            else if (n == 0){
-                
-            }
-            else{
-                printf("c->fd = %d received data:%s with thread_id=0x%x\n",c->fd,buffer,pthread_self());
-                memset(buffer,0,1024);
-            }
-            
-            dispatch_conn(c->fd,CONN_STATE_WRITE);
-            break;
-        case CONN_STATE_WRITE:
-            printf("c->fd=%d server sent: %s\n",c->fd,sendmsg);
-            write(c->fd,sendmsg,strlen(sendmsg));
-            
-            break;
-        case CONN_STATE_CLOSE:
-            conn_close(c);
-            break;
-        default:
-            break;
+    /*event finite-state machine*/
+    if (c != NULL){
+        event_FSM(c);
     }
-#else
-    event_FSM(c);
-#endif
+    
     return;
 }
 
@@ -495,7 +431,7 @@ static void *worker_libevent(void *arg)
 }
 
 
-int thread_init(int nthreads,struct event_base *main_base)
+int thread_init(int nthreads)
 {
     int i;
     
