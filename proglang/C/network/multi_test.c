@@ -91,9 +91,6 @@ static CQ_ITEM *cq_pop(CQ *cq){
 
 static LIBEVENT_THREAD *threads;
 struct event_base *main_base;
-#if 0
-void on_accept(evutil_socket_t fd, short what, void *arg);
-#endif
 static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base);
 void event_handler(int fd, short which, void *arg);
 int main(int argc, char **argv)
@@ -117,10 +114,6 @@ int main(int argc, char **argv)
     thread_init(MAXTHREADS,main_base);
     
     usleep(100000);
-#if 0    
-    ev_accept = event_new(main_base,sockfd,EV_READ|EV_PERSIST,on_accept,(void*)main_base);
-    event_add(ev_accept,NULL);
-#endif
     event_base_loop(main_base,0);
 }
 
@@ -171,28 +164,6 @@ void dispatch_conn(int sfd,CONN_STATE state){
     buf[0] = 'c';
     write(thread->notify_send_fd,buf,1);
 }
-
-#if 0
-void on_accept(evutil_socket_t fd, short what, void *arg)
-{
-    int connfd;
-    struct sockaddr_in client_addr;
-    char buf[1];
-    
-    struct event_base *base = (struct event_base*)arg;
-    
-    socklen_t client_len = sizeof(client_addr);
-    
-    connfd = accept(fd,(struct sockaddr*)&client_addr,&client_len);
-    
-    evutil_make_socket_nonblocking(connfd);
-
-    dispatch_conn(connfd);
-
-}
-#endif
-
-
 
 
 static void create_worker(void *(*func)(void*),void *arg)
@@ -277,7 +248,7 @@ static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
     c->base = base;
     c->state = init_state;
     
-#if 1
+
     if (c->state == CONN_STATE_WRITE){
         /*don't set the flag as EV_WRITE|EV_PERSIST*/
         event_set(&c->event,fd,EV_WRITE,event_handler,(void*)c);
@@ -289,7 +260,7 @@ static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
 
     event_base_set(base,&c->event);
     event_add(&c->event,0);
-#endif
+
     
     return c;
 }
@@ -327,9 +298,6 @@ int thread_init(int nthreads,struct event_base *main_base)
     if (threads == NULL){
         return -1;
     }
-    
-//    threads[0].base = main_base;
-//    threads[0].thread_id = pthread_self();
     
     for (i=0; i<nthreads; i++){
         int fds[2];
