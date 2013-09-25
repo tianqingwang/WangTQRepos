@@ -95,7 +95,7 @@ struct event_base *main_base;
 void on_accept(evutil_socket_t fd, short what, void *arg);
 #endif
 static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base);
-
+void event_handler(int fd, short which, void *arg);
 int main(int argc, char **argv)
 {
     struct event *ev_accept;
@@ -220,6 +220,16 @@ static void *worker_libevent(void *arg)
     return NULL;
 }
 
+
+
+int update_event(conn *c,int new_flag)
+{
+    event_del(&c->event);
+    event_set(&c->event,c->fd,new_flag,event_handler,c);
+    event_base_set(c->base,&c->event);
+    event_add(&c->event,0);
+}
+
 void event_handler(int fd, short which, void *arg)
 {
     conn *c = (conn*)arg;
@@ -247,7 +257,6 @@ void event_handler(int fd, short which, void *arg)
                 memset(buffer,0,1024);
             }
             
-            //write(c->fd,sendmsg,strlen(sendmsg));
             dispatch_conn(c->fd,CONN_STATE_WRITE);
             break;
         case CONN_STATE_WRITE:
@@ -269,8 +278,14 @@ static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
     c->state = init_state;
     
 #if 1
-
-    event_set(&c->event,fd,EV_READ|EV_WRITE|EV_PERSIST,event_handler,(void*)c);
+    if (c->state == CONN_STATE_WRITE){
+        /*don't set the flag as EV_WRITE|EV_PERSIST*/
+        event_set(&c->event,fd,EV_WRITE,event_handler,(void*)c);
+    }
+    else{
+        event_set(&c->event,fd,EV_READ|EV_PERSIST,event_handler,(void*)c);
+    }
+    
 
     event_base_set(base,&c->event);
     event_add(&c->event,0);
