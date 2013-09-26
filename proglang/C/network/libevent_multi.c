@@ -1,59 +1,21 @@
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/queue.h>
-#include <event.h>
-#include <pthread.h>
 #include <string.h>
-#include <time.h>
-#include <fcntl.h>
-#include <errno.h>
+#include "libevent_socket.h"
+#include "libevent_multi.h"
 
-#define NPORT   5000
-#define BACKLOG  5
-#define MAXTHREADS 3
-#define RBUFSIZE   (1024)
-#define WBUFSIZE   (1024)
 
-typedef enum conn_state{
-    CONN_STATE_LISTENING = 0x0,
-    CONN_STATE_READ,
-    CONN_STATE_WRITE,
-    CONN_STATE_WAITING,
-    CONN_STATE_CLOSE
-}CONN_STATE;
+static LIBEVENT_THREAD *threads;
+struct event_base *main_base;
+static last_thread = -1;
+static int g_threads_num;
 
-typedef struct cq_item{
-    int fd;
-    CONN_STATE state;
-    struct cq_item *next;
-}CQ_ITEM;
-
-typedef struct cq{
-    CQ_ITEM *header;
-    CQ_ITEM *tail;
-    pthread_mutex_t lock;
-    pthread_cond_t  cond;
-}CQ;
-
-typedef struct _LIBEVENT_THREAD{
-    pthread_t thread_id;
-    int notify_receive_fd;
-    int notify_send_fd;
-    struct event_base *base;
-    struct event notify_event;
-    CQ     new_conn_queue;
-}LIBEVENT_THREAD;
-
-typedef struct _CONNECT{
-    int fd;
-    CONN_STATE state;
-    struct event_base *base;
-    struct event event;
-}conn;
-
+static void conn_set_state(conn *c,CONN_STATE new_state);
+static void conn_close(conn *c);
 
 static void cq_init(CQ *cq){
     pthread_mutex_init(&cq->lock,NULL);
@@ -93,117 +55,14 @@ static CQ_ITEM *cq_pop(CQ *cq){
 }
 
 
-static LIBEVENT_THREAD *threads;
-struct event_base *main_base;
-
-
-static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base);
-static void conn_set_state(conn *c,CONN_STATE new_state);
-static void conn_close(conn *c);
-void event_handler(int fd, short which, void *arg);
-static int set_socket_nonblock(int fd);
-static int set_socket_reusable(int fd);
-
-int main(int argc, char **argv)
-{
-    main_base = event_init();
-    
-    int sockfd = socket_setup(NPORT);
-    if (sockfd < 0){
-        perror("Failed to create socket.");
-        return -1;
-    }
-    
-    conn *c = conn_new(sockfd,CONN_STATE_LISTENING,main_base);
-    if (c == NULL){
-        fprintf(stderr,"Failed to create socket accept.\n");
-        return -1;
-    }
-    
-    
-    thread_init(MAXTHREADS);
-    
-    /*wait for threads to setup completely.*/
-    usleep(100000);
-    
-    event_base_loop(main_base,0);
-    
-    return 0;
-}
-
-static int set_socket_nonblock(int fd)
-{
-    int flag;
-    flag = fcntl(fd,F_GETFL,NULL);
-    if (flag < 0){
-        return -1;
-    }
-    
-    flag |= O_NONBLOCK;
-    
-    if (fcntl(fd,F_SETFL,flag) < 0){
-        return -1;
-    }
-    
-    return 0;
-}
-
-static int set_socket_reusable(int fd)
-{
-    int reuse_on = 1;
-    return setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&reuse_on,sizeof(reuse_on));
-}
-
-int socket_setup(int nPort)
-{
-    int listenfd;
-    struct sockaddr_in listen_addr;
-    int reuse = 1;
-    
-    listenfd = socket(AF_INET,SOCK_STREAM,0);
-    if (listenfd < 0){
-        fprintf(stderr,"Failed to create socket.\n");
-        return -1;
-    }
-    
-    /*set socket reuseable*/
-    if (set_socket_reusable(listenfd) < 0){
-        fprintf(stderr,"Failed to set listening socket re-usable.\n");
-        return -1;
-    }
-    
-    /*set socket non-blocking*/
-    if (set_socket_nonblock(listenfd) < 0){
-        fprintf(stderr,"Failed to set listening socket non-blocking.\n");
-        return -1;
-    }
-    
-    memset(&listen_addr,0,sizeof(struct sockaddr_in));
-    listen_addr.sin_family      = AF_INET;
-    listen_addr.sin_addr.s_addr = INADDR_ANY;
-    listen_addr.sin_port        = htons(nPort);
-    if (bind(listenfd,(struct sockaddr*)&listen_addr,sizeof(listen_addr)) < 0){
-        fprintf(stderr,"Failed to bind the listening socket fd.\n");
-        return -1;
-    }
-    
-    if (listen(listenfd,BACKLOG) < 0){
-        fprintf(stderr,"Failed to set the listening socket to listen.\n");
-        return -1;
-    }
-    
-    return listenfd;
-}
-
-static last_thread = -1;
-
-void dispatch_conn(int sfd,CONN_STATE state){
+void dispatch_conn(int sfd,CONN_STATE init_state,int ev_flag){
     char buf[1];
     CQ_ITEM *item = malloc(sizeof(CQ_ITEM));
     item->fd = sfd;
-    item->state = state;
+    item->state = init_state;
+    item->ev_flag = ev_flag;
     
-    int tid = (last_thread + 1)%MAXTHREADS;
+    int tid = (last_thread + 1)%g_threads_num;
     last_thread = tid;
     
     LIBEVENT_THREAD *thread = threads + tid;
@@ -211,7 +70,6 @@ void dispatch_conn(int sfd,CONN_STATE state){
     buf[0] = 'c';
     write(thread->notify_send_fd,buf,1);
 }
-
 
 static void create_worker(void *(*func)(void*),void *arg)
 {
@@ -266,7 +124,7 @@ static void event_FSM(conn *c)
                     break;
                 }
                 
-                dispatch_conn(connfd,CONN_STATE_READ);
+                dispatch_conn(connfd,CONN_STATE_READ,EV_READ|EV_PERSIST);
                 
                 stop = 1;
                 
@@ -296,7 +154,7 @@ static void event_FSM(conn *c)
                     memset(rbuf,0,sizeof(rbuf));
                 }
                 /*for test*/
-                dispatch_conn(c->fd,CONN_STATE_WRITE);
+                dispatch_conn(c->fd,CONN_STATE_WRITE,EV_WRITE);
                 stop = 1;
                 break;
             case CONN_STATE_WRITE:
@@ -343,24 +201,16 @@ void event_handler(int fd, short which, void *arg)
 }
 
 
-static conn *conn_new(int fd,CONN_STATE init_state,struct event_base *base)
+static conn *conn_new(int fd,CONN_STATE init_state,int ev_flag,struct event_base *base)
 {
     conn *c = malloc(sizeof(conn));
 
     c->fd = fd;
     c->base = base;
     c->state = init_state;
-    
 
-    if (c->state == CONN_STATE_WRITE){
-        /*don't set the flag as EV_WRITE|EV_PERSIST*/
-        event_set(&c->event,fd,EV_WRITE,event_handler,(void*)c);
-    }
-    else{
-        event_set(&c->event,fd,EV_READ|EV_PERSIST,event_handler,(void*)c);
-    }
+    event_set(&c->event,fd,ev_flag,event_handler,(void*)c);
     event_base_set(base,&c->event);
-    
     event_add(&c->event,0);
 
     return c;
@@ -399,7 +249,6 @@ static void conn_close(conn *c)
 static void thread_libevent_process(int fd, short which,void *arg)
 {
     LIBEVENT_THREAD *this = arg;
-    char buffer[1024];
     CQ_ITEM *item;
     
     char buf[1];
@@ -407,12 +256,10 @@ static void thread_libevent_process(int fd, short which,void *arg)
         perror("can't read from libevent pipe.");
     }
     
-//    printf("hi, I get it from 0x%x.\n",this->thread_id);
-    
     item = cq_pop(&this->new_conn_queue);
     
     if (item != NULL){
-        conn *c = conn_new(item->fd,item->state,this->base);
+        conn *c = conn_new(item->fd,item->state,item->ev_flag,this->base);
         if (c == NULL){
             close(item->fd);
         }
@@ -431,9 +278,16 @@ static void *worker_libevent(void *arg)
 }
 
 
-int thread_init(int nthreads)
+int worker_thread_init(int nthreads)
 {
     int i;
+    
+    if (nthreads <= 0){
+        g_threads_num = DEFAULT_MAXTHREADS;
+    }
+    else{
+        g_threads_num = nthreads;
+    }
     
     threads =(LIBEVENT_THREAD*) malloc(sizeof(LIBEVENT_THREAD)*nthreads);
     if (threads == NULL){
@@ -452,6 +306,7 @@ int thread_init(int nthreads)
         setup_thread(&threads[i]);
     }
     
+    /*create worker threads.*/
     for (i=0; i<nthreads; i++){
         create_worker(worker_libevent,&threads[i]);
     }
@@ -475,6 +330,17 @@ int setup_thread(LIBEVENT_THREAD *thread)
     
     cq_init(&thread->new_conn_queue);
 }
+
+void master_thread_loop(int sockfd)
+{
+    main_base = event_init();
+    
+    /*setup main_base in charge of accept connection.*/
+    conn *c = conn_new(sockfd,CONN_STATE_LISTENING,EV_READ|EV_PERSIST,main_base);
+    
+    event_base_loop(main_base,0);
+}
+
 
 
 
