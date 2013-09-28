@@ -12,11 +12,11 @@ int socket_setopt(int sockfd,int level,int optname,const void *optval,int optlen
     return setsockopt(sockfd,level,optname,optval,optlen);
 }
 
-int socket_setsocket_reuse(int sockfd)
-{
-    int reuse = 1;
-    return setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
+int socket_reuseaddr(int sockfd){
+    int reuse_on =1;
+    return setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&reuse_on,sizeof(reuse_on));
 }
+
 
 int socket_nonblock(int sockfd)
 {
@@ -84,12 +84,10 @@ int socket_setup(int nPort)
         return -1;
     }
     
-    int reuse = 1;
-    
-    if (socket_setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse)) == -1){
+    if (socket_reuseaddr(sockfd) == -1){
         return -1;
-    }
-    
+    } 
+
     memset(serv_addr,0,sizeof(sockaddr_in));
     
     serv_addr.sin_family = AF_INET;
