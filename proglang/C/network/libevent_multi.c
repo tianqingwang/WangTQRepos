@@ -68,55 +68,25 @@ static CQ_ITEM *cq_pop(CQ *cq){
 
 static pthread_mutex_t  tlock = PTHREAD_MUTEX_INITIALIZER;
 
-LIBEVENT_THREAD *choose_thread()
-{
-    int tid;
-    LIBEVENT_THREAD *thread;
-    pthread_mutex_lock(&tlock);
-   
-    tid = (last_thread + 1)%g_threads_num;
-    last_thread = tid;
-    
-    thread = threads + tid;
-    pthread_mutex_unlock(&tlock);
-    
-    return thread;
-}
 
-#if 1
 void dispatch_conn(int sfd,CONN_STATE init_state,int ev_flag){
     char buf[1];
     CQ_ITEM *item = malloc(sizeof(CQ_ITEM));
     item->fd = sfd;
     item->state = init_state;
     item->ev_flag = ev_flag;
-#if 0    
+ 
     int tid = (last_thread + 1)%g_threads_num;
     last_thread = tid;
     
     LIBEVENT_THREAD *thread = threads + tid;
-#else
-    LIBEVENT_THREAD *thread = choose_thread();
-#endif
+
     printf("dispatch_conn\n");
     cq_push(&thread->new_conn_queue,item);
     buf[0] = 'c';
     write(thread->notify_send_fd,buf,1);
 }
-#else
-void dispatch_conn(CQ_ITEM *item)
-{
-    char buf[1];
-    
-    int tid = (last_thread + 1)%g_threads_num;
-    last_thread = tid;
-    
-    LIBEVENT_THREAD *thread = threads + tid;
-    cq_push(&thread->new_conn_queue,item);
-    buf[0] = 'c';
-    write(thread->notify_send_fd,buf,1);
-}
-#endif
+
 
 static void create_worker(void *(*func)(void*),void *arg)
 {
@@ -171,52 +141,16 @@ static void event_FSM(conn *c)
                     close(connfd);
                     break;
                 }
-                #if 1
+
                 printf("connected,dispatch_conn.\n");
                 dispatch_conn(connfd,CONN_STATE_READ,EV_READ|EV_PERSIST);
-                #else
-                CQ_ITEM *item = malloc(sizeof(CQ_ITEM));
-                item->fd = connfd;
-                item->state = CONN_STATE_READ;
-                item->ev_flag = EV_READ|EV_PERSIST;
-                item->wsize = WBUFSIZE;
-                item->wbuf = malloc(sizeof(char)*item->wsize);
-                dispatch_conn(item);
-                #endif
+
                 stop = 1;
                 
                 break;
             case CONN_STATE_READ:
-#if 0
-                /*fixme: if ET mode.*/
-                printf("CONN_STATE_READ.\n");
-                n = read(c->fd,rbuf,RBUFSIZE);
-                if (n == -1){
-                    if (errno == EAGAIN || errno == EWOULDBLOCK){
-                        //conn_set_state(c,CONN_STATE_WAIT);
-                        
-                        break;
-                    }
-                    else{
-                        /*read error, maybe connection dropped.*/
-                        conn_set_state(c,CONN_STATE_CLOSE);
-                        break;
-                    }
-                }
-                else if(n == 0){
-                    conn_set_state(c,CONN_STATE_CLOSE);
-                    break;
-                }
-                else{
-                    /*got data*/
-                    /*fixme: if n==RBUFSIZE*/
-                    rbuf[n] = '\0';
-                    fprintf(stdout,"server received:%s\n",rbuf);
-                    memset(rbuf,0,sizeof(rbuf));
-                }
-#else
                 g_readcb(c->fd);
-#endif                
+               
                 stop = 1;
                 break;
             case CONN_STATE_WRITE:
@@ -409,18 +343,10 @@ static void thread_libevent_process(int fd, short which,void *arg)
     }
     printf("thread_libevent_process\n");
     item = cq_pop(&this->new_conn_queue);
-#if 0    
-    if (item != NULL){
-        conn *c = conn_new(item->fd,item->state,item->ev_flag,this->base);
-        if (c == NULL){
-            close(item->fd);
-        }
-    }
-#else
+
     struct bufferevent *bev = bufferevent_socket_new(this->base,item->fd,BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(bev,on_read,on_write,NULL,NULL);
     bufferevent_enable(bev,EV_READ|EV_WRITE|EV_PERSIST);
-#endif
     
     free(item);
 }
