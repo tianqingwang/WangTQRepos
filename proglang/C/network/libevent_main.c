@@ -8,8 +8,9 @@
 #define BACKLOG    5
 #define MAXTHREADS 3
 
-void read_callback(int fd);
-void write_callback(int fd,char *buf);
+void read_callback(struct bufferevent *bev,void *arg);
+void write_callback(struct bufferevent *bev,void *arg);
+void event_callback(struct bufferevent *bev, short events, void *arg);
 
 int main(int argc, char *argv[])
 {
@@ -26,28 +27,44 @@ int main(int argc, char *argv[])
     worker_thread_init(MAXTHREADS);
     set_read_callback(read_callback);
     set_write_callback(write_callback);
-    //pthread_create(&test_id,NULL,(void*)&test_func,NULL);
     master_thread_loop(sockfd);
     
     return 0;
 }
 
-static int count = 0;
-
-void read_callback(int fd)
+/*sample for read/write/event callback.*/
+void read_callback(struct bufferevent *bev,void *arg)
 {
     char buf[1024];
     int n;
+    /*read buffer in bufferevent*/
+    struct evbuffer *input = bufferevent_get_input(bev);
+    /*write buffer in bufferevent*/
+    struct evbuffer *output = bufferevent_get_output(bev);
+    /*connected socket fd in bufferevent.*/
+    int fd = bufferevent_getfd(bev);
     
-    n = read(fd,buf,1024);
-    if (n > 0){
-        fprintf(stdout,"(%d)%s: server received string:%s\n",count++,__FILE__,buf);
-        memset(buf,0,1024);
+
+    while((n=evbuffer_remove(input,buf,sizeof(buf))) > 0){
+        printf("fd=%d,received:%s at thread=0x%x\n",fd,buf,pthread_self());
+        evbuffer_add(output,buf,n);
     }
+
 }
 
-void write_callback(int fd, char *buf)
+void write_callback(struct bufferevent *bev,void *arg)
 {
-    
+    /*how to use write callback?*/
+}
+
+void event_callback(struct bufferevent *bev, short events, void *arg)
+{
+    /*events from callback*/
+    if (events & BEV_EVENT_ERROR){
+        perror("Error from bufferevent.");
+    }
+    if (events &(BEV_EVENT_ERROR|BEV_EVENT_EOF)){
+        bufferevent_free(bev);
+    }
 }
 
