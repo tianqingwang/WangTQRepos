@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <string.h>
 #include "libevent_socket.h"
 #include "libevent_multi.h"
@@ -13,6 +14,7 @@ static LIBEVENT_THREAD *threads;
 
 struct event_base *main_base;
 struct event       main_event;
+struct event       clock_event;
 
 static last_thread = -1;
 static int g_threads_num;
@@ -28,6 +30,7 @@ static void (*g_eventcb)(struct bufferevent *bev,short events, void *arg);
 void on_accept(int fd, short which, void *args);
 void on_read(struct bufferevent *bev, void *arg);
 void on_write(struct bufferevent *bev,void *arg);
+void check_timeout(int fd, short which, void *args);
 
 static void cq_init(CQ *cq){
     pthread_mutex_init(&cq->lock,NULL);
@@ -181,8 +184,9 @@ static void thread_libevent_process(int fd, short which,void *arg)
 {
     LIBEVENT_THREAD *this = arg;
     CQ_ITEM *item;
-    
     char buf[1];
+    struct timeval tv={5,0};
+    
     if (read(fd,buf,1) != 1){
         perror("can't read from libevent pipe.");
     }
@@ -192,6 +196,9 @@ static void thread_libevent_process(int fd, short which,void *arg)
     struct bufferevent *bev = bufferevent_socket_new(this->base,item->fd,BEV_OPT_CLOSE_ON_FREE);
     /*fixme: need callback argument*/
     bufferevent_setcb(bev,g_readcb,g_writecb,g_eventcb,NULL);
+    
+    bufferevent_set_timeouts(bev,&tv,&tv);
+    
     bufferevent_enable(bev,EV_READ|EV_WRITE|EV_PERSIST);
     
 //    free(item);
@@ -264,11 +271,20 @@ int setup_thread(LIBEVENT_THREAD *thread)
 
 void master_thread_loop(int sockfd)
 {
+    fd_init();
+  
     main_base = event_init();
+    
+    struct timeval tv={10,0};
 
-    event_set(&main_event,sockfd,EV_READ|EV_PERSIST,on_accept,NULL);
+    event_set(&main_event,sockfd,EV_READ|EV_PERSIST,on_accept,NULL);    
     event_base_set(main_base,&main_event);
     event_add(&main_event,0);
+    
+    /*add timer*/
+    event_set(&clock_event,-1,EV_TIMEOUT|EV_PERSIST,check_timeout,NULL);
+    event_base_set(main_base,&clock_event);
+    event_add(&clock_event,&tv);
  
     event_base_loop(main_base,0);
 }
@@ -307,10 +323,21 @@ void on_accept(int fd, short which, void *args)
         close(connfd);
     }
     
+    fd_insert(connfd);
+    
     dispatch_conn(connfd,EV_READ|EV_PERSIST);
     
 }
 
+
+/*CLOSE_WAIT check*/
+void check_timeout(int fd, short which, void *args)
+{
+
+    if (which & EV_TIMEOUT){
+        check_closewait_timeout(time(NULL));
+    }
+}
 
 
 

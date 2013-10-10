@@ -5,7 +5,6 @@
 
 #define DEFAULT_MAXTHREADS 2
 
-
 typedef struct cq_item{
     int         fd;
     int         ev_flag;

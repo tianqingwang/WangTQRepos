@@ -44,6 +44,8 @@ void read_callback(struct bufferevent *bev,void *arg)
     /*connected socket fd in bufferevent.*/
     int fd = bufferevent_getfd(bev);
     
+    time_t now = time(NULL);
+    fd_update_last_time(fd,now);
 
     while((n=evbuffer_remove(input,buf,sizeof(buf))) > 0){
         printf("fd=%d,received:%s at thread=0x%x\n",fd,buf,pthread_self());
@@ -60,11 +62,21 @@ void write_callback(struct bufferevent *bev,void *arg)
 void event_callback(struct bufferevent *bev, short events, void *arg)
 {
     /*events from callback*/
+    if (events & EV_TIMEOUT){
+        fprintf(stderr,"events timeout.\n");
+    }
     if (events & BEV_EVENT_ERROR){
         perror("Error from bufferevent.");
     }
     if (events &(BEV_EVENT_ERROR|BEV_EVENT_EOF)){
         bufferevent_free(bev);
+    }
+    
+    if (events &(BEV_EVENT_TIMEOUT|BEV_EVENT_READING)){
+        fprintf(stderr,"read timeout.\n");
+    }
+    if (events & (BEV_EVENT_TIMEOUT | BEV_EVENT_WRITING)){
+        fprintf(stderr,"write timeout.\n");
     }
 }
 
