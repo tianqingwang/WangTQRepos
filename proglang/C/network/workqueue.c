@@ -60,8 +60,8 @@
     }                                            \
     else{                                        \
         item = head->prev;                       \
-        head->prev = item->prev;                 \
-        head->next = item->next;                 \
+        head->prev  = item->prev;                \
+        item->prev->next = head;                 \
         item->next = item->prev = NULL;          \
     }                                            \
 }
