@@ -24,7 +24,7 @@
 *   |      ---------  ---------     ---------   |
 *   ---------------------------------------------
 **********************************************************/
-
+#if 0
 #define LIST_ADD(item,list){  \
     item->prev = NULL;               \
     item->next = list;               \
@@ -38,24 +38,56 @@
     if (item == list) list = item->next;                   \
     item->prev = item->next = NULL;                        \
 }
+#endif
+
+#if 1
+#define LIST_INIT_HEAD(head){                 \
+    head->next = head;                        \
+    head->prev = head;                        \
+}
+
+#define LIST_ADD(item,head){                     \
+    head->next->prev = item;                     \
+    item->next       = head->next;               \
+    item->prev       = head;                     \
+    head->next       = item;                     \
+}
+
+#define LIST_REMOVE(item,head){                  \
+    printf("head=%p\n",head);                    \
+    if (head->next == head){                     \
+        item = NULL;                             \
+    }                                            \
+    else{                                        \
+        item = head->prev;                       \
+        head->prev = item->prev;                 \
+        head->next = item->next;                 \
+        item->next = item->prev = NULL;          \
+    }                                            \
+}
+#endif
+
+#if 0
+
+
+
+#endif
+
+static worker_t worker_head;
+static job_t    job_head;
+
+pthread_mutex_t jobs_mutex;
+pthread_cond_t  jobs_cond;
+
+job_t *workqueue_fetch_job(workqueue_t *workqueue);
 
 static void *worker_function(void *args)
 {
     worker_t *worker = (worker_t*)args;
     job_t   *job;
     
-    while(1){
-        pthread_mutex_lock(&worker->workqueue->jobs_mutex);
-        while(worker->workqueue->waiting_jobs == NULL){
-            /*blocked to wait cond signal*/
-            pthread_cond_wait(&worker->workqueue->jobs_cond,&worker->workqueue->jobs_mutex);
-        }
-        
-        job = worker->workqueue->waiting_jobs;
-        if (job != NULL){
-            LIST_REMOVE(job,worker->workqueue->waiting_jobs);
-        }
-        pthread_mutex_unlock(&worker->workqueue->jobs_mutex);
+    while(1){    
+        job = workqueue_fetch_job(worker->workqueue);
         
         if (worker->shutdown) break;
         
@@ -85,8 +117,18 @@ int  workqueue_init(workqueue_t *workqueue,int nworks)
     if (nworks < 0) nworks = 1;
     
     memset(workqueue,0,sizeof(workqueue_t));
-    memcpy(&workqueue->jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
-    memcpy(&workqueue->jobs_cond,&init_cond,sizeof(pthread_cond_t));
+//    memcpy(&workqueue->jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
+//    memcpy(&workqueue->jobs_cond,&init_cond,sizeof(pthread_cond_t));
+    
+    memcpy(&jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
+    memcpy(&jobs_cond,&init_cond,sizeof(pthread_cond_t));
+    
+    /*workqueue heads*/
+    workqueue->workers = &worker_head;
+    workqueue->waiting_jobs = &job_head;
+    
+    LIST_INIT_HEAD(workqueue->workers);
+    LIST_INIT_HEAD(workqueue->waiting_jobs);
     
     for (i=0; i<nworks; i++){
         worker = (worker_t*)malloc(sizeof(worker_t));
@@ -122,6 +164,7 @@ void  workqueue_shutdown(workqueue_t *workqueue)
     pthread_mutex_unlock(&workqueue->jobs_mutex);
 }
 
+#if 0
 /*purpose: add a new job to workqueue*/
 void  workqueue_add_job(workqueue_t *workqueue,job_t *job)
 {
@@ -130,4 +173,34 @@ void  workqueue_add_job(workqueue_t *workqueue,job_t *job)
     LIST_ADD(job,workqueue->waiting_jobs);
     pthread_cond_signal(&workqueue->jobs_cond);
     pthread_mutex_unlock(&workqueue->jobs_mutex);
+}
+#else
+void workqueue_add_job(workqueue_t *workqueue, job_t *job)
+{
+    pthread_mutex_lock(&jobs_mutex);
+    LIST_ADD(job,workqueue->waiting_jobs);
+    pthread_cond_signal(&jobs_cond);
+    pthread_mutex_unlock(&jobs_mutex);
+}
+
+#endif
+
+job_t *workqueue_fetch_job(workqueue_t *workqueue)
+{
+    job_t *job;
+    
+    pthread_mutex_lock(&jobs_mutex);
+    
+    while (workqueue->waiting_jobs->next == workqueue->waiting_jobs){
+        //pthread_cond_wait(&worker->workqueue->jobs_cond,&worker->workqueue->jobs_mutex);
+        pthread_cond_wait(&jobs_cond,&jobs_mutex);
+//        pthread_mutex_unlock(&jobs_mutex);
+//        return NULL;
+    }
+    
+    LIST_REMOVE(job,workqueue->waiting_jobs);
+    
+    pthread_mutex_unlock(&jobs_mutex);
+    
+    return job;
 }

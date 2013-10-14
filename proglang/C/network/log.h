@@ -23,10 +23,12 @@ extern "C"
 #define LOG_INFO              7
 #define LOG_DEBUG             8 
 
-#define DEBUG		          0
+#define DEBUG		          1
 
 	void initLogInfo();
+#if 0
 	void logInfoForSel(int level,const char *fmt, va_list args);
+#endif
 	void logInfo(int level,const char *fmt, ...);
 	void endLogInfo();
 
