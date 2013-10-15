@@ -3,18 +3,19 @@
 #include <event.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <signal.h>
 #include "libevent_event.h"
 #include "workqueue.h"
 #include "log.h"
 
-#define THREAD_NUM    (4)
+#define THREAD_NUM    (5)
 
 struct event_base *main_base;
 struct event       main_event;
 struct event       clock_event;
 
-static workqueue_t workqueue;
-
+/*store the received data from client.*/
+static user_data_t *pUserData = NULL;
 
 struct timeval tv_read_timeout={5,0};
 
@@ -22,16 +23,13 @@ void on_accept(int fd, short which, void *args);
 void on_read(struct bufferevent *bev, void *args);
 void on_error(struct bufferevent *bev, short which, void *args);
 void check_timeout(int fd, short which, void *args);
-//static void write_process(job_t *job);
+
 static void *write_process(void *arg);
 void main_loop(int sockfd)
 {
     struct timeval tv={20,0};
     enum event_method_feature f;
-
-    fd_init();
     
-//    workqueue_init(&workqueue,THREAD_NUM);
     workqueue_init(THREAD_NUM);
     
     main_base = event_init();
@@ -63,6 +61,11 @@ void main_loop(int sockfd)
     event_base_loop(main_base,0);
 }
 
+void main_loop_exit()
+{
+    event_base_loopexit(main_base,NULL);
+}
+
 void on_accept(int fd, short which, void *args)
 {
     int connfd;
@@ -71,24 +74,21 @@ void on_accept(int fd, short which, void *args)
     
     connfd = accept(fd,(struct sockaddr*)&client_addr,&client_len);
     if (connfd == -1){
-        if (errno == EAGAIN){
-            logInfo(LOG_WARN,"accept errno is EAGAIN");
-        }
-        else if (errno == EMFILE){
-            logInfo(LOG_ERR,"Too many open connections.");
+        if (errno == EAGAIN || errno = EINTR){
+            logInfo(LOG_WARN,"accept error: EAGAIN or EINTR");
         }
         else{
-            logInfo(LOG_ERR,"accept error.");
+            logInfo(LOG_ERR,"accept error: fd = %d, %s",connfd,strerror(errno));
         }
     }
+    
+    logInfo(LOG_INFO,"accept fd=%d",connfd);
     
     /*libevent needs nonblocking socket fd.*/
     if (set_socket_nonblock(connfd) == -1){
         logInfo(LOG_ERR,"failed to set NONBLOCK.");
         close(connfd);
     }
-    
-    printf("accept fd=%d\n",connfd);
     
     fd_insert(connfd);
     
@@ -104,7 +104,7 @@ void on_accept(int fd, short which, void *args)
 
 void on_read(struct bufferevent *bev, void *args)
 {
-    
+    int i;
     /*get connected socket fd.*/
     int fd = bufferevent_getfd(bev); 
     /*get input buffer*/
@@ -112,28 +112,31 @@ void on_read(struct bufferevent *bev, void *args)
     
     size_t len = evbuffer_get_length(input);
     if (len){
-        /*get all data*/
-        user_data_t *user_data = (user_data_t*)malloc(sizeof(user_data_t));
-//        job_t       *job = (job_t*)malloc(sizeof(job_t));
-        
-        user_data->pdata = (char*)malloc(sizeof(char)*(len+1));
-        
-        if (user_data->pdata == NULL){
-            logInfo(LOG_ERR,"failed to allocate memory for user_data.");
+        /*fixme: you can use your data structure to store received data.*/
+        if (fd < 0){
+            return ;
         }
-        evbuffer_remove(input,user_data->pdata,len);
-        user_data->pdata[len] = '\0';
-        user_data->datalen = len;
-        user_data->fd      = fd;
         
-//        job->job_function = write_process;
-//        job->arg          =(user_data);
+        fd_update_last_time(fd,time(NULL));
+        
+        i=fd;
+        
+        pUserData[i].fd = fd;
+        if (pUserData[i].pdata != NULL){
+            free(pUserData[i].pdata);
+        }
+        pUserData[i].pdata = (char*)malloc(sizeof(char)*(len+1));
+        if (pUserData[i].pdata == NULL){
+            logInfo(LOG_ERR,"failed to allocate memory for pdata of pUserData.");
+            return;
+        }
+        
+        evbuffer_remove(input,pUserData[i].pdata,len);
+        pUserData[i].pdata[len] = '\0';
+        pUserData[i].datalen    = len;
+        
         printf("add fd=%d value to workqueue.\n",fd);
-       // workqueue_add_job(&workqueue,&job);
- //      workqueue_add_job(&job);
- //       workqueue_add_job(job);
-        workqueue_add_job(write_process,(void*)user_data);
-
+        workqueue_add_job(write_process,(void*)&pUserData[i]);
     }
     
 }
@@ -150,13 +153,57 @@ void check_timeout(int fd, short which, void *args)
 {
 }
 
+void set_max_connection(int nMaxConnection)
+{
+    if (pUserData != NULL){
+        free(pUserData);
+    }
+    
+    pUserData = (user_data_t*)malloc(sizeof(user_data_t)*nMaxConnection);
+    if (pUserData == NULL){
+        logInfo(LOG_ERR,"failed to allocate memory.");
+        exit(1);
+    }
+    
+    int i=0; 
+    for (i=0; i<nMaxConnection; i++){
+        pUserData[i].fd = -1;
+        pUserData[i].datalen = 0;
+    }
+}
+
+static void signal_handler(int sig)
+{
+    if (sig == SIGINT){
+        workqueue_shutdown();
+        main_loop_exit();
+    }
+}
+
+void signal_process()
+{
+    struct sigaction action={
+        .sa_handler = signal_handler,
+        .sa_flags   = 0,
+    };
+    
+    sigemptyset(&action.sa_mask);
+    
+    sigaction(SIGINT,&action,NULL);
+}
+
+
 static void *write_process(void *arg)
 {
     user_data_t *user_data = (user_data_t*)arg;
-    printf("user_data=%p\n",user_data);
+    
     printf("write_process:%s with fd=%d,thread=0x%x\n",user_data->pdata,user_data->fd,pthread_self());
     
-    int i;
-    for (i=0; i<600000; i++){
-    }
+    char echobuf[1024] = {0};
+    sprintf(echobuf,"echo: %s with fd=%d.",user_data->pdata,user_data->fd);
+    write(user_data->fd,echobuf,strlen(echobuf));
+    memset(echobuf,0,1024);
+    //usleep(10000);
+    usleep(10000);
+
 }

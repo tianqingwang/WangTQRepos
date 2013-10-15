@@ -39,6 +39,7 @@ static void *worker_function(void *args)
         
         if (pool->shutdown){
             pthread_mutex_unlock(&(pool->jobs_mutex));
+            
             pthread_exit(NULL);
         }
         
@@ -65,6 +66,7 @@ int  workqueue_init(int nworks)
     pthread_cond_init(&(pool->jobs_cond),NULL);
     
     pool->jobs_head = NULL;
+    pool->jobs_tail = NULL;
     pool->max_thread_num = nworks;
     pool->cur_queue_size = 0;
     
@@ -81,11 +83,31 @@ int  workqueue_init(int nworks)
 /*purpose: shutdown thread pool, free workqueue*/
 void  workqueue_shutdown()
 {
-
+    if (pool->shutdown){
+        return;
+    }
+    pool->shutdown = 1;
+    
+    pthread_cond_broadcast(&(pool->jobs_cond));
+    
+    int i;
+    for (i=0; i<pool->max_thread_num; i++){
+        pthread_join(pool->threadid[i],NULL);
+    }
+    free(pool->threadid);
+    
+    job_t *head = NULL;
+    while(pool->jobs_head != NULL){
+        head = pool->jobs_head;
+        pool->jobs_head = pool->jobs_head->next;
+        free(head);
+    }
+    
+    free(pool);
+    pool = NULL;
 }
 
 /*purpose: add a new job to workqueue*/
-//void  workqueue_add_job(job_t *job)
 void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
 {
     job_t *job = (job_t*)malloc(sizeof(job_t));
@@ -94,16 +116,14 @@ void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
     job->next = NULL;
     
     pthread_mutex_lock(&(pool->jobs_mutex));
-    job_t *member = pool->jobs_head;
     
-    if (member != NULL){
-        while(member->next != NULL){
-            member = member->next;
-        }
-        member->next = job;
+    if (pool->jobs_head != NULL){
+        pool->jobs_tail->next = job;
+        pool->jobs_tail = job;
     }
     else{
         pool->jobs_head = job;
+        pool->jobs_tail = pool->jobs_head;
     }
     pool->cur_queue_size ++;
     

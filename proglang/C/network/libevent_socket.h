@@ -15,7 +15,9 @@ int set_socket_linger(int fd);
 int set_socket_reusable(int fd);
 int socket_setup(int nPort);
 
-void fd_init(void);
+int set_rlimit(long nMaxCore,int nMaxConnection);
+
+void fd_init(int nMaxConnection);
 int  fd_insert(int fd);
 int  fd_del(int fd);
 int  fd_update_last_time(int fd,time_t last_time);

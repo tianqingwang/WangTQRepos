@@ -13,6 +13,7 @@ typedef struct workqueue{
     struct worker   *workers;
     
     job_t *jobs_head;
+    job_t *jobs_tail;
     
     int shutdown;
     pthread_t *threadid;
