@@ -24,183 +24,91 @@
 *   |      ---------  ---------     ---------   |
 *   ---------------------------------------------
 **********************************************************/
-#if 0
-#define LIST_ADD(item,list){  \
-    item->prev = NULL;               \
-    item->next = list;               \
-    list = item;                     \
-}
 
 
-#define LIST_REMOVE(item,list){  \
-    if (item->prev != NULL) item->prev->next = item->next; \
-    if (item->next != NULL) item->next->prev = item->prev; \
-    if (item == list) list = item->next;                   \
-    item->prev = item->next = NULL;                        \
-}
-#endif
-
-#if 1
-#define LIST_INIT_HEAD(head){                 \
-    head->next = head;                        \
-    head->prev = head;                        \
-}
-
-#define LIST_ADD(item,head){                     \
-    head->next->prev = item;                     \
-    item->next       = head->next;               \
-    item->prev       = head;                     \
-    head->next       = item;                     \
-}
-
-#define LIST_REMOVE(item,head){                  \
-    printf("head=%p\n",head);                    \
-    if (head->next == head){                     \
-        item = NULL;                             \
-    }                                            \
-    else{                                        \
-        item = head->prev;                       \
-        head->prev  = item->prev;                \
-        item->prev->next = head;                 \
-        item->next = item->prev = NULL;          \
-    }                                            \
-}
-#endif
-
-#if 0
-
-
-
-#endif
-
-static worker_t worker_head;
-static job_t    job_head;
-
-pthread_mutex_t jobs_mutex;
-pthread_cond_t  jobs_cond;
-
-job_t *workqueue_fetch_job(workqueue_t *workqueue);
+static workqueue_t *pool = NULL;
 
 static void *worker_function(void *args)
 {
-    worker_t *worker = (worker_t*)args;
-    job_t   *job;
     
-    while(1){    
-        job = workqueue_fetch_job(worker->workqueue);
+    while(1){
+        pthread_mutex_lock(&(pool->jobs_mutex));
+        while(pool->cur_queue_size == 0 && !pool->shutdown){
+            pthread_cond_wait(&(pool->jobs_cond),&(pool->jobs_mutex));
+        }
         
-        if (worker->shutdown) break;
+        if (pool->shutdown){
+            pthread_mutex_unlock(&(pool->jobs_mutex));
+            pthread_exit(NULL);
+        }
+        
+        pool->cur_queue_size --;
+        job_t *job = pool->jobs_head;
+        pool->jobs_head = job->next;
+       
+        pthread_mutex_unlock(&(pool->jobs_mutex));
         
         if (job == NULL) continue;
+        job->job_function(job->arg);
         
-        /*execute job*/
-        job->job_function(job);
+        free(job);
+        job = NULL;
     }
-    
-    free(worker);
     pthread_exit(NULL);
 }
 
 /*purpose: create thread pool to run the jobs in workqueue*/
-int  workqueue_init(workqueue_t *workqueue,int nworks)
+int  workqueue_init(int nworks)
 {
-    int i;
-    worker_t *worker;
+    pool = (workqueue_t*)malloc(sizeof(workqueue_t));
+    pthread_mutex_init(&(pool->jobs_mutex),NULL);
+    pthread_cond_init(&(pool->jobs_cond),NULL);
     
-    pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t  init_cond  = PTHREAD_COND_INITIALIZER;
+    pool->jobs_head = NULL;
+    pool->max_thread_num = nworks;
+    pool->cur_queue_size = 0;
     
-    if (workqueue == NULL){
-        return -1;
-    }
+    pool->shutdown = 0;
     
-    if (nworks < 0) nworks = 1;
-    
-    memset(workqueue,0,sizeof(workqueue_t));
-//    memcpy(&workqueue->jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
-//    memcpy(&workqueue->jobs_cond,&init_cond,sizeof(pthread_cond_t));
-    
-    memcpy(&jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
-    memcpy(&jobs_cond,&init_cond,sizeof(pthread_cond_t));
-    
-    /*workqueue heads*/
-    workqueue->workers = &worker_head;
-    workqueue->waiting_jobs = &job_head;
-    
-    LIST_INIT_HEAD(workqueue->workers);
-    LIST_INIT_HEAD(workqueue->waiting_jobs);
-    
+    pool->threadid = (pthread_t*)malloc(nworks*sizeof(pthread_t));
+    int i = 0;
     for (i=0; i<nworks; i++){
-        worker = (worker_t*)malloc(sizeof(worker_t));
-        memset(worker,0,sizeof(worker_t));
-        
-        worker->workqueue = workqueue;
-        if (pthread_create(&worker->tid,NULL,worker_function,(void*)worker) != 0){
-            /*failed*/
-            perror("failed to allocate workers");
-            free(worker);
-            return -1;
-        }
-        
-        /*add worker to queue*/
-        LIST_ADD(worker,worker->workqueue->workers);
+        pthread_create(&(pool->threadid[i]),NULL,worker_function,NULL);
     }
 }
 
 
 /*purpose: shutdown thread pool, free workqueue*/
-void  workqueue_shutdown(workqueue_t *workqueue)
+void  workqueue_shutdown()
 {
-    worker_t *worker;
-    
-    for (worker = workqueue->workers; worker != NULL; worker = worker->next){
-        worker->shutdown = 1;
-    }
-    
-    pthread_mutex_lock(&workqueue->jobs_mutex);
-    workqueue->workers = NULL;
-    workqueue->waiting_jobs    = NULL;
-    pthread_cond_broadcast(&workqueue->jobs_cond);
-    pthread_mutex_unlock(&workqueue->jobs_mutex);
+
 }
 
-#if 0
 /*purpose: add a new job to workqueue*/
-void  workqueue_add_job(workqueue_t *workqueue,job_t *job)
+//void  workqueue_add_job(job_t *job)
+void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
 {
-    pthread_mutex_lock(&workqueue->jobs_mutex);
-    /*add job to waiting_jobs*/
-    LIST_ADD(job,workqueue->waiting_jobs);
-    pthread_cond_signal(&workqueue->jobs_cond);
-    pthread_mutex_unlock(&workqueue->jobs_mutex);
-}
-#else
-void workqueue_add_job(workqueue_t *workqueue, job_t *job)
-{
-    pthread_mutex_lock(&jobs_mutex);
-    LIST_ADD(job,workqueue->waiting_jobs);
-    pthread_cond_signal(&jobs_cond);
-    pthread_mutex_unlock(&jobs_mutex);
-}
-
-#endif
-
-job_t *workqueue_fetch_job(workqueue_t *workqueue)
-{
-    job_t *job;
+    job_t *job = (job_t*)malloc(sizeof(job_t));
+    job->job_function = job_function;
+    job->arg = arg;
+    job->next = NULL;
     
-    pthread_mutex_lock(&jobs_mutex);
+    pthread_mutex_lock(&(pool->jobs_mutex));
+    job_t *member = pool->jobs_head;
     
-    while (workqueue->waiting_jobs->next == workqueue->waiting_jobs){
-        //pthread_cond_wait(&worker->workqueue->jobs_cond,&worker->workqueue->jobs_mutex);
-        pthread_cond_wait(&jobs_cond,&jobs_mutex);
-//        pthread_mutex_unlock(&jobs_mutex);
-//        return NULL;
+    if (member != NULL){
+        while(member->next != NULL){
+            member = member->next;
+        }
+        member->next = job;
     }
+    else{
+        pool->jobs_head = job;
+    }
+    pool->cur_queue_size ++;
     
-    LIST_REMOVE(job,workqueue->waiting_jobs);
+    pthread_cond_signal(&(pool->jobs_cond));
+    pthread_mutex_unlock(&(pool->jobs_mutex));
     
-    pthread_mutex_unlock(&jobs_mutex);
-    
-    return job;
+//    return 0;
 }

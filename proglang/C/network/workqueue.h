@@ -4,29 +4,27 @@
 #include <pthread.h>
 
 typedef struct job{
-    void (*job_function)(struct job *jobs); /*callback function definition*/
-    void *user_data;
-    struct job *prev;
+    void *(*job_function)(void *arg); /*callback function definition*/
+    void *arg;
     struct job *next;
 }job_t;
 
-typedef struct worker{
-    pthread_t            tid;
-    int                  shutdown;    /*control the running threads to exit*/
-    struct workqueue    *workqueue;
-    struct worker       *prev;
-    struct worker       *next;
-}worker_t;
-
 typedef struct workqueue{
     struct worker   *workers;
-    struct job      *waiting_jobs;
+    
+    job_t *jobs_head;
+    
+    int shutdown;
+    pthread_t *threadid;
+    int max_thread_num;
+    int cur_queue_size;
+    
     pthread_mutex_t  jobs_mutex;
     pthread_cond_t   jobs_cond;
 }workqueue_t;
 
-int  workqueue_init(workqueue_t *workqueue,int nworks);
-void workqueue_shutdown(workqueue_t *workqueue);
-void workqueue_add_job(workqueue_t *workqueue,job_t *job);
+int  workqueue_init(int nworks);
+void workqueue_shutdown();
+void workqueue_add_job(void *(*job_function)(void *arg),void *arg);
 
 #endif
