@@ -9,8 +9,8 @@
 #include "libevent_event.h"
 #include "log.h"
 
-#define  MAX_NOFILE  4096
 #define  MAX_CONNECTION 4096
+#define  SOCKET_PORT    5000
 
 int main(int argc, char *argv[])
 {
@@ -19,21 +19,6 @@ int main(int argc, char *argv[])
     struct rlimit rt;
     
     initLogInfo();
-
-#if 0    
-    if (getrlimit(RLIMIT_NOFILE,&rt) == -1){
-        printf("getrlimit\n");
-    }
-    
-    printf("rlim_max=%d,rlim_cur=%d\n",rt.rlim_max,rt.rlim_cur);
-    
-    rt.rlim_max = rt.rlim_cur = MAX_NOFILE;
-    
-    
-    if (setrlimit(RLIMIT_NOFILE,&rt) == -1){
-        printf("setrlimit\n");
-    }
-#endif
     
     set_rlimit(RLIM_INFINITY,MAX_CONNECTION);
  
@@ -42,7 +27,7 @@ int main(int argc, char *argv[])
     
     signal_process();
 
-    listen_fd = socket_setup(5000);
+    listen_fd = socket_setup(SOCKET_PORT);
     
     if (listen_fd == -1){
         logInfo(LOG_ERR,"socket_setup failed.");

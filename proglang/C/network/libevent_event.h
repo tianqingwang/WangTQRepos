@@ -3,6 +3,7 @@
 
 typedef struct user_data_s{
     int            fd;
+    //int            dstfd;
     int            datalen;
     char          *pdata;
     struct timeval accept_time;

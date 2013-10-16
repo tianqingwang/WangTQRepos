@@ -185,6 +185,10 @@ int fd_update_last_time(int fd,time_t last_time)
     return ret;
 }
 
+void fd_free(){
+    free(g_fd);
+}
+
 int check_closewait_timeout(time_t now)
 {
     int i;

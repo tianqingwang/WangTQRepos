@@ -6,7 +6,6 @@
 #define BACKLOG   5
 typedef struct fd_s{
     int fd;
-//    int event;
     time_t last_time;
 }fd_t;
 

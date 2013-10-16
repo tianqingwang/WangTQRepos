@@ -8,7 +8,7 @@
 #include "workqueue.h"
 #include "log.h"
 
-#define THREAD_NUM    (5)
+#define THREAD_NUM    (8)
 
 struct event_base *main_base;
 struct event       main_event;
@@ -25,6 +25,7 @@ void on_error(struct bufferevent *bev, short which, void *args);
 void check_timeout(int fd, short which, void *args);
 
 static void *write_process(void *arg);
+
 void main_loop(int sockfd)
 {
     struct timeval tv={20,0};
@@ -64,6 +65,15 @@ void main_loop(int sockfd)
 void main_loop_exit()
 {
     event_base_loopexit(main_base,NULL);
+    
+    event_del(&main_event);
+    event_del(&clock_event);
+    
+    event_base_free(main_base);
+    
+    if (pUserData != NULL){
+        free(pUserData);
+    }
 }
 
 void on_accept(int fd, short which, void *args)
@@ -74,7 +84,7 @@ void on_accept(int fd, short which, void *args)
     
     connfd = accept(fd,(struct sockaddr*)&client_addr,&client_len);
     if (connfd == -1){
-        if (errno == EAGAIN || errno = EINTR){
+        if (errno == EAGAIN || errno == EINTR){
             logInfo(LOG_WARN,"accept error: EAGAIN or EINTR");
         }
         else{
@@ -98,7 +108,7 @@ void on_accept(int fd, short which, void *args)
     }
     
     bufferevent_setcb(bev,on_read,NULL,on_error,NULL);
-    bufferevent_set_timeouts(bev,&tv_read_timeout,NULL);
+    
     bufferevent_enable(bev,EV_READ|EV_PERSIST);
 }
 
@@ -112,7 +122,7 @@ void on_read(struct bufferevent *bev, void *args)
     
     size_t len = evbuffer_get_length(input);
     if (len){
-        /*fixme: you can use your data structure to store received data.*/
+        /*todo: fix reading data by your requirement.*/
         if (fd < 0){
             return ;
         }
@@ -135,7 +145,7 @@ void on_read(struct bufferevent *bev, void *args)
         pUserData[i].pdata[len] = '\0';
         pUserData[i].datalen    = len;
         
-        printf("add fd=%d value to workqueue.\n",fd);
+        //printf("add fd=%d value to workqueue.\n",fd);
         workqueue_add_job(write_process,(void*)&pUserData[i]);
     }
     
@@ -143,10 +153,17 @@ void on_read(struct bufferevent *bev, void *args)
 
 void on_error(struct bufferevent *bev, short which, void *args)
 {
-    if (which & (BEV_EVENT_ERROR)){
-        logInfo(LOG_ERR,"bufferevent error.");
-        bufferevent_free(bev);
+    if (which & (BEV_EVENT_EOF)){
+        logInfo(LOG_ERR,"connection closed,fd=%d,error:%s",bufferevent_getfd(bev),evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+        
     }
+    else if (which & (BEV_EVENT_ERROR)){
+        logInfo(LOG_ERR,"BEV_EVENT_ERROR,fd=%d,error:%s",bufferevent_getfd(bev),evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR()));
+        //bufferevent_free(bev);
+    }
+    
+    bufferevent_free(bev);
+
 }
 
 void check_timeout(int fd, short which, void *args)
@@ -177,6 +194,8 @@ static void signal_handler(int sig)
     if (sig == SIGINT){
         workqueue_shutdown();
         main_loop_exit();
+        fd_free();
+        endLogInfo();
     }
 }
 
@@ -192,9 +211,13 @@ void signal_process()
     sigaction(SIGINT,&action,NULL);
 }
 
-
+/*This is the callback function for thread pool. Please fill function
+ *your requirement. Also, you can define many callback functions
+ * for different arguments as you need.
+ */
 static void *write_process(void *arg)
 {
+    
     user_data_t *user_data = (user_data_t*)arg;
     
     printf("write_process:%s with fd=%d,thread=0x%x\n",user_data->pdata,user_data->fd,pthread_self());
