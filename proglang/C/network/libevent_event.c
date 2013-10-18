@@ -35,7 +35,7 @@ void main_loop(int sockfd)
     
     main_base = event_init();
     
-    /*list method and mode.*/
+    /*some information of libevent.*/
     fprintf(stdout,"Using Libevent with backend method:%s.\n",event_base_get_method(main_base));
     
     f=event_base_get_features(main_base);
@@ -122,7 +122,7 @@ void on_read(struct bufferevent *bev, void *args)
     
     size_t len = evbuffer_get_length(input);
     if (len){
-        /*todo: fix reading data by your requirement.*/
+        /*todo: fix data reading operation by your requirement.*/
         if (fd < 0){
             return ;
         }
@@ -132,6 +132,7 @@ void on_read(struct bufferevent *bev, void *args)
         i=fd;
         
         pUserData[i].fd = fd;
+        
         if (pUserData[i].pdata != NULL){
             free(pUserData[i].pdata);
         }
@@ -142,10 +143,12 @@ void on_read(struct bufferevent *bev, void *args)
         }
         
         evbuffer_remove(input,pUserData[i].pdata,len);
+        
         pUserData[i].pdata[len] = '\0';
         pUserData[i].datalen    = len;
         
-        //printf("add fd=%d value to workqueue.\n",fd);
+        fprintf(stdout,"\nfd=%d read string:%s\n",fd,pUserData[i].pdata);
+        
         workqueue_add_job(write_process,(void*)&pUserData[i]);
     }
     
@@ -212,8 +215,8 @@ void signal_process()
 }
 
 /*This is the callback function for thread pool. Please fill function
- *your requirement. Also, you can define many callback functions
- * for different arguments as you need.
+ *by your requirement. Also, you can define many callback functions
+ *for different arguments as you need.
  */
 static void *write_process(void *arg)
 {
@@ -227,6 +230,6 @@ static void *write_process(void *arg)
     write(user_data->fd,echobuf,strlen(echobuf));
     memset(echobuf,0,1024);
     //usleep(10000);
-    usleep(10000);
+    usleep(100000);
 
 }

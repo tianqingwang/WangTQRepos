@@ -48,42 +48,6 @@ static struct timeval getTime()
 	return tp;
 }
 
-#if 0
-void logInfoForSel(int level,const char *fmt, va_list args)
-{
-	struct tm localTime;
-	time_t t;
-	char timeStr[32];
-	struct tm* pLocalTime=NULL;
-	char* pTimeStr=NULL;
-	size_t len=0;
-	struct timeval usec=getTime();
-	if(global_out_level >= level)
-	{
-		pthread_mutex_lock (&mutex);
-		if (file) {
-			t=time(0);
-			fprintf(file,"[%s] ",err_levels[level]);
-			pLocalTime=localtime_r(&t,&localTime);
-			if(NULL == pLocalTime)
-			{
-				return;
-			}
-			pTimeStr=asctime_r(pLocalTime,timeStr);
-			if(NULL == pTimeStr)
-			{
-				return;
-			}
-			len=strlen(pTimeStr);
-			pTimeStr[len-1]='\0';
-			fprintf(file,"%s usec=%ld ",pTimeStr,usec.tv_usec);
-			(void)vfprintf(file, fmt, args);
-			fprintf( file, "\n" );
-		}
-		pthread_mutex_unlock (&mutex);
-	}
-}
-#endif
 
 void logInfo(int level,const char *fmt, ...)
 {

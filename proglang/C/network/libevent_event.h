@@ -1,6 +1,7 @@
 #ifndef __LIBEVENT_EVENT_H__
 #define __LIBEVENT_EVENT_H__
 
+#if 0
 typedef struct user_data_s{
     int            fd;
     //int            dstfd;
@@ -8,7 +9,7 @@ typedef struct user_data_s{
     char          *pdata;
     struct timeval accept_time;
 }user_data_t;
-
+#endif
 
 void set_max_connection(int nMaxConnection);
 void signal_process();
