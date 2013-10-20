@@ -3,7 +3,7 @@
 * Author: Wang Tianqing
 * Date  : 2013-09-18
 *****************************************************/
-
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,183 +24,299 @@
 *   |      ---------  ---------     ---------   |
 *   ---------------------------------------------
 **********************************************************/
-#if 0
-#define LIST_ADD(item,list){  \
-    item->prev = NULL;               \
-    item->next = list;               \
-    list = item;                     \
-}
 
+#define MAX_JOB_NUM    (1024)
 
-#define LIST_REMOVE(item,list){  \
-    if (item->prev != NULL) item->prev->next = item->next; \
-    if (item->next != NULL) item->next->prev = item->prev; \
-    if (item == list) list = item->next;                   \
-    item->prev = item->next = NULL;                        \
-}
-#endif
+static workqueue_t *pool = NULL;
 
-#if 1
-#define LIST_INIT_HEAD(head){                 \
-    head->next = head;                        \
-    head->prev = head;                        \
-}
+/*variables for free jobs list*/
+static job_t         **freejobslist;
+static int             freejobslist_total;
+static int             freejobslist_cur;
+static pthread_mutex_t freejobslist_mutex;
+static pthread_cond_t  freejobslist_cond;
 
-#define LIST_ADD(item,head){                     \
-    head->next->prev = item;                     \
-    item->next       = head->next;               \
-    item->prev       = head;                     \
-    head->next       = item;                     \
-}
+/*functions for free jobs list*/
+static void   init_freejobslist(int njobs);
+static job_t *get_from_freejobslist();
+static void   add_to_freejobslist(job_t *job);
+static void   free_freejobslist();
 
-#define LIST_REMOVE(item,head){                  \
-    printf("head=%p\n",head);                    \
-    if (head->next == head){                     \
-        item = NULL;                             \
-    }                                            \
-    else{                                        \
-        item = head->prev;                       \
-        head->prev  = item->prev;                \
-        item->prev->next = head;                 \
-        item->next = item->prev = NULL;          \
-    }                                            \
-}
-#endif
-
-#if 0
-
-
-
-#endif
-
-static worker_t worker_head;
-static job_t    job_head;
-
-pthread_mutex_t jobs_mutex;
-pthread_cond_t  jobs_cond;
-
-job_t *workqueue_fetch_job(workqueue_t *workqueue);
+/*variables for user_data_t*/
+static user_data_t     **freedatalist;
+static int               freedatalist_total;
+static int               freedatalist_cur;
+static pthread_mutex_t   freedatalist_mutex;
+static pthread_cond_t    freedatalist_cond;
 
 static void *worker_function(void *args)
 {
-    worker_t *worker = (worker_t*)args;
-    job_t   *job;
     
-    while(1){    
-        job = workqueue_fetch_job(worker->workqueue);
+    while(1){
+        pthread_mutex_lock(&(pool->jobs_mutex));
+        while(pool->cur_queue_size == 0 && !pool->shutdown){
+            pthread_cond_wait(&(pool->jobs_cond),&(pool->jobs_mutex));
+        }
         
-        if (worker->shutdown) break;
+        if (pool->shutdown){
+            pthread_mutex_unlock(&(pool->jobs_mutex));
+            break;
+        }
         
+        pool->cur_queue_size --;
+        job_t *job = pool->jobs_head;
+        pool->jobs_head = job->next;
+       
+        pthread_mutex_unlock(&(pool->jobs_mutex));
+        
+        /*to avoid segment fault.*/
         if (job == NULL) continue;
+        if (job->job_function == NULL){
+            add_to_freejobslist(job);
+            continue;
+        }
         
-        /*execute job*/
-        job->job_function(job);
+        job->job_function(job->arg);
+        
+        /*now job is free again.*/
+        add_to_freejobslist(job);
     }
-    
-    free(worker);
-    pthread_exit(NULL);
 }
 
 /*purpose: create thread pool to run the jobs in workqueue*/
-int  workqueue_init(workqueue_t *workqueue,int nworks)
+int  workqueue_init(int nworks)
 {
-    int i;
-    worker_t *worker;
+    pool = (workqueue_t*)malloc(sizeof(workqueue_t));
+    pthread_mutex_init(&(pool->jobs_mutex),NULL);
+    pthread_cond_init(&(pool->jobs_cond),NULL);
     
-    pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t  init_cond  = PTHREAD_COND_INITIALIZER;
+    pool->jobs_head = NULL;
+    pool->jobs_tail = NULL;
     
-    if (workqueue == NULL){
-        return -1;
+    pool->max_thread_num = nworks;
+    pool->cur_queue_size = 0;
+    
+    pool->shutdown = 0;
+    
+    /*pre-allocate jobs.*/
+    init_freejobslist(MAX_JOB_NUM);
+    
+    pool->threadid = (pthread_t*)malloc(nworks*sizeof(pthread_t));
+    if (pool->threadid == NULL){
+        fprintf(stderr,"failed to create thread pool.\n");
+        exit(EXIT_FAILURE);
     }
-    
-    if (nworks < 0) nworks = 1;
-    
-    memset(workqueue,0,sizeof(workqueue_t));
-//    memcpy(&workqueue->jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
-//    memcpy(&workqueue->jobs_cond,&init_cond,sizeof(pthread_cond_t));
-    
-    memcpy(&jobs_mutex,&init_mutex,sizeof(pthread_mutex_t));
-    memcpy(&jobs_cond,&init_cond,sizeof(pthread_cond_t));
-    
-    /*workqueue heads*/
-    workqueue->workers = &worker_head;
-    workqueue->waiting_jobs = &job_head;
-    
-    LIST_INIT_HEAD(workqueue->workers);
-    LIST_INIT_HEAD(workqueue->waiting_jobs);
-    
+    int i = 0;
     for (i=0; i<nworks; i++){
-        worker = (worker_t*)malloc(sizeof(worker_t));
-        memset(worker,0,sizeof(worker_t));
-        
-        worker->workqueue = workqueue;
-        if (pthread_create(&worker->tid,NULL,worker_function,(void*)worker) != 0){
-            /*failed*/
-            perror("failed to allocate workers");
-            free(worker);
-            return -1;
+        if (pthread_create(&(pool->threadid[i]),NULL,worker_function,NULL) < 0){
+            fprintf(stderr,"pthread_create failed.\n");
+            exit(EXIT_FAILURE);
         }
-        
-        /*add worker to queue*/
-        LIST_ADD(worker,worker->workqueue->workers);
     }
 }
 
 
 /*purpose: shutdown thread pool, free workqueue*/
-void  workqueue_shutdown(workqueue_t *workqueue)
+void  workqueue_shutdown()
 {
-    worker_t *worker;
+    if (pool->shutdown){
+        return;
+    }
+    pool->shutdown = 1;
     
-    for (worker = workqueue->workers; worker != NULL; worker = worker->next){
-        worker->shutdown = 1;
+    /*wake up all blocked thread.*/
+    pthread_cond_broadcast(&(pool->jobs_cond));
+    
+    int i;
+    for (i=0; i<pool->max_thread_num; i++){
+        pthread_join(pool->threadid[i],NULL);
     }
     
-    pthread_mutex_lock(&workqueue->jobs_mutex);
-    workqueue->workers = NULL;
-    workqueue->waiting_jobs    = NULL;
-    pthread_cond_broadcast(&workqueue->jobs_cond);
-    pthread_mutex_unlock(&workqueue->jobs_mutex);
+    free(pool->threadid);
+  
+    job_t *head = NULL;
+    while(pool->jobs_head != NULL){
+        head = pool->jobs_head;
+        pool->jobs_head = pool->jobs_head->next;
+        head->next = NULL;
+        add_to_freejobslist(head);
+    }
+    
+    free_freejobslist();
+    free(pool);
+    pool = NULL;
 }
 
-#if 0
 /*purpose: add a new job to workqueue*/
-void  workqueue_add_job(workqueue_t *workqueue,job_t *job)
+void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
 {
-    pthread_mutex_lock(&workqueue->jobs_mutex);
-    /*add job to waiting_jobs*/
-    LIST_ADD(job,workqueue->waiting_jobs);
-    pthread_cond_signal(&workqueue->jobs_cond);
-    pthread_mutex_unlock(&workqueue->jobs_mutex);
-}
-#else
-void workqueue_add_job(workqueue_t *workqueue, job_t *job)
-{
-    pthread_mutex_lock(&jobs_mutex);
-    LIST_ADD(job,workqueue->waiting_jobs);
-    pthread_cond_signal(&jobs_cond);
-    pthread_mutex_unlock(&jobs_mutex);
+    job_t *job = get_from_freejobslist();
+    
+    if (job == NULL) return;
+    
+    job->job_function = job_function;
+    job->arg = arg;
+    job->next = NULL;
+    
+    pthread_mutex_lock(&(pool->jobs_mutex));
+    /*add to job queue.*/
+    if (pool->jobs_head != NULL){
+        pool->jobs_tail->next = job;
+        pool->jobs_tail = job;
+    }
+    else{
+        pool->jobs_head = job;
+        pool->jobs_tail = pool->jobs_head;
+    }
+    pool->cur_queue_size ++;
+    
+    pthread_cond_signal(&(pool->jobs_cond));
+    pthread_mutex_unlock(&(pool->jobs_mutex));
 }
 
-#endif
+/*pre-allocate memory for job list.*/
+static void init_freejobslist(int njobs)
+{
+    int i;
+    
+    freejobslist = malloc(sizeof(job_t*)*njobs);
+    if (freejobslist == NULL){
+        fprintf(stderr,"failed to allocate memory for freejobslist.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    for (i=0; i<njobs; i++){
+        freejobslist[i] = malloc(sizeof(job_t));
+        if (freejobslist[i] == NULL){
+            fprintf(stderr,"failed to allocate memory for freejobslist.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    freejobslist_total = njobs;
+    freejobslist_cur   = njobs;
+    
+    pthread_mutex_init(&freejobslist_mutex,NULL);
+    pthread_cond_init(&freejobslist_cond,NULL);
+}
 
-job_t *workqueue_fetch_job(workqueue_t *workqueue)
+/*add one unused job to free job list.*/
+static void add_to_freejobslist(job_t *job)
+{
+    pthread_mutex_lock(&freejobslist_mutex);
+    
+    if (freejobslist_cur < freejobslist_total){
+        freejobslist[freejobslist_cur++] = job;
+    }
+    pthread_cond_signal(&freejobslist_cond);
+    
+    pthread_mutex_unlock(&freejobslist_mutex);
+}
+
+/*get a job from free job list.*/
+static job_t *get_from_freejobslist()
 {
     job_t *job;
     
-    pthread_mutex_lock(&jobs_mutex);
+    pthread_mutex_lock(&freejobslist_mutex);
     
-    while (workqueue->waiting_jobs->next == workqueue->waiting_jobs){
-        //pthread_cond_wait(&worker->workqueue->jobs_cond,&worker->workqueue->jobs_mutex);
-        pthread_cond_wait(&jobs_cond,&jobs_mutex);
-//        pthread_mutex_unlock(&jobs_mutex);
-//        return NULL;
+    while(freejobslist_cur == 0){
+        /*now freejobslist is unavailable, block and wait for signal 
+         *until list is available again.
+         */
+        pthread_cond_wait(&freejobslist_cond,&freejobslist_mutex);
     }
     
-    LIST_REMOVE(job,workqueue->waiting_jobs);
+    if (freejobslist_cur > 0){
+        job = freejobslist[--freejobslist_cur];
+    }
     
-    pthread_mutex_unlock(&jobs_mutex);
+    pthread_mutex_unlock(&freejobslist_mutex);
     
     return job;
+}
+
+/*free all allocated memory for job list.*/
+static void free_freejobslist()
+{
+    int i;
+    
+    for (i=0; i<freejobslist_total; i++){
+        free(freejobslist[i]);
+    }
+    
+    free(freejobslist);
+    
+    pthread_mutex_destroy(&freejobslist_mutex);
+    pthread_cond_destroy(&freejobslist_cond);
+}
+
+void init_datalist(int nMaxConnection)
+{
+    int i;
+    
+    freedatalist = malloc(sizeof(user_data_t*)*nMaxConnection);
+    if (freedatalist == NULL){
+        fprintf(stderr,"failed to allocate memory for datalist.\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    for (i=0; i<nMaxConnection; i++){
+        freedatalist[i] = malloc(sizeof(user_data_t));
+        if (freedatalist[i] == NULL){
+            fprintf(stderr,"failed to allocated memory for datalist.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    freedatalist_total = nMaxConnection;
+    freedatalist_cur   = nMaxConnection;
+    
+    pthread_mutex_init(&freedatalist_mutex,NULL);
+    pthread_cond_init(&freedatalist_cond,NULL);
+}
+
+user_data_t *get_from_datalist()
+{
+    user_data_t *user_data;
+    
+    pthread_mutex_lock(&freedatalist_mutex);
+    
+    while(freedatalist_cur == 0){
+        pthread_cond_wait(&freedatalist_cond,&freedatalist_mutex);
+    }
+    
+    if (freedatalist_cur > 0){
+        user_data = freedatalist[--freedatalist_cur];
+    }
+    
+    pthread_mutex_unlock(&freedatalist_mutex);
+    
+    return user_data;
+}
+
+void add_to_datalist(user_data_t *user_data)
+{
+    pthread_mutex_lock(&freedatalist_mutex);
+    
+    if (freedatalist_cur < freedatalist_total){
+        freedatalist[freedatalist_cur++] = user_data;
+    }
+    
+    pthread_cond_signal(&freedatalist_cond);
+    pthread_mutex_unlock(&freedatalist_mutex);
+}
+
+ void free_datalist()
+{
+    int i;
+    
+    for (i=0; i<freedatalist_total; i++){
+        free(freedatalist[i]);
+    }
+    
+    free(freedatalist);
+
+    pthread_mutex_destroy(&freedatalist_mutex);
+    pthread_cond_destroy(&freedatalist_cond);
 }

@@ -26,9 +26,6 @@ extern "C"
 #define DEBUG		          1
 
 	void initLogInfo();
-#if 0
-	void logInfoForSel(int level,const char *fmt, va_list args);
-#endif
 	void logInfo(int level,const char *fmt, ...);
 	void endLogInfo();
 
