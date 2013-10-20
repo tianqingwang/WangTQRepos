@@ -18,7 +18,7 @@ int socket_listen(int sockfd, int backlog=5);
 int socket_connect(int sockfd,struct sockaddr *serv_addr,int nAddrLen);
 int socket_accept(int sockfd,struct sockaddr *addr, int *nAddrLen);
 
-int socket_send(int sockfd,void *pbuf, int nbuf, int flags = 0);
+int socket_send(int sockfd,const char *buf, int nbufsize, int flags = 0)
 int socket_recv(int sockfd, void *pbuf, int nbuf, int flags = 0);
 
 int socket_close(int sockfd);
