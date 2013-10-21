@@ -55,9 +55,32 @@ int socket_accept(int sockfd,struct sockaddr *addr, int *nAddrLen)
     return accept(sockfd,addr,(socklen_t*)nAddrLen);
 }
 
-int socket_send(int sockfd,void *pbuf, int nbuf, int flags = 0)
+int socket_send(int sockfd,const char *buf, int nbufsize, int flags = 0)
 {
-    return send(sockfd,pbuf,nbuf,flags);
+    int res = 1;
+    int totallen = nbufsize;
+    int sentlen = 0;
+    char *p = buf;
+
+    while(res){
+        sentlen = send(sockfd,buf,totallen,flags);
+        if (sentlen < 0){
+            if (errno == EINTR){
+                return -1;
+            }
+            if (errno == EAGAIN){
+                usleep(1000);
+                continue;
+            }
+        }
+
+        if (totallen == sentlen){
+            return nbufsize;
+        }
+
+        totallen -= sentlen;
+        p += sentlen;
+    }
 }
 
 int socket_recv(int sockfd, void *pbuf, int nbuf, int flags = 0)
