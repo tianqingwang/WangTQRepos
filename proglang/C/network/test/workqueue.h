@@ -27,12 +27,13 @@ typedef struct workqueue{
     int                cur_queue_size;
     
     pthread_mutex_t    jobs_mutex;
-    pthread_cond_t     jobs_cond;
+    pthread_cond_t     jobs_notempty;
+    pthread_cond_t     jobs_empty;
 }workqueue_t;
 
 int  workqueue_init(int nworks);
 void workqueue_shutdown();
 void workqueue_add_job(void *(*job_function)(void *arg),void *arg);
-
+void workqueue_join();
 
 #endif

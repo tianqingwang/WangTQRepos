@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "workqueue.h"
 
 /*********************************************************
@@ -51,11 +52,10 @@ static pthread_cond_t    freedatalist_cond;
 
 static void *worker_function(void *args)
 {
-    
     while(1){
         pthread_mutex_lock(&(pool->jobs_mutex));
         while(pool->cur_queue_size == 0 && !pool->shutdown){
-            pthread_cond_wait(&(pool->jobs_cond),&(pool->jobs_mutex));
+            pthread_cond_wait(&(pool->jobs_notempty),&(pool->jobs_mutex));
         }
         
         if (pool->shutdown){
@@ -72,6 +72,10 @@ static void *worker_function(void *args)
         }
         else{
             pool->jobs_head = job->next;
+        }
+        
+        if (pool->cur_queue_size == 0){
+            pthread_cond_signal(&pool->jobs_empty);
         }
        
         pthread_mutex_unlock(&(pool->jobs_mutex));
@@ -95,7 +99,9 @@ int  workqueue_init(int nworks)
 {
     pool = (workqueue_t*)malloc(sizeof(workqueue_t));
     pthread_mutex_init(&(pool->jobs_mutex),NULL);
-    pthread_cond_init(&(pool->jobs_cond),NULL);
+
+    pthread_cond_init(&(pool->jobs_empty),NULL);
+    pthread_cond_init(&(pool->jobs_notempty),NULL);
     
     pool->jobs_head = NULL;
     pool->jobs_tail = NULL;
@@ -122,23 +128,31 @@ int  workqueue_init(int nworks)
     }
 }
 
+void workqueue_cancel()
+{
+    pthread_cond_broadcast(&pool->jobs_notempty);
+    pthread_cond_broadcast(&pool->jobs_empty);
+    
+    int i;
+    for (i=0; i<pool->max_thread_num; i++){
+        pthread_cancel(pool->threadid[i]);
+    }
+}
 
 /*purpose: shutdown thread pool, free workqueue*/
 void  workqueue_shutdown()
 {
-    if (pool->shutdown){
-        return;
-    }
     pool->shutdown = 1;
     
     /*wake up all blocked thread.*/
-    pthread_cond_broadcast(&(pool->jobs_cond));
+    pthread_cond_broadcast(&pool->jobs_notempty);
+    pthread_cond_broadcast(&pool->jobs_empty);
     
     int i;
     for (i=0; i<pool->max_thread_num; i++){
         pthread_join(pool->threadid[i],NULL);
     }
-    
+ 
     free(pool->threadid);
   
     job_t *head = NULL;
@@ -152,6 +166,7 @@ void  workqueue_shutdown()
     free_freejobslist();
     free(pool);
     pool = NULL;
+
 }
 
 /*purpose: add a new job to workqueue*/
@@ -172,6 +187,7 @@ void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
     /*add to job queue.*/
     if (pool->cur_queue_size == 0){
         pool->jobs_head = pool->jobs_tail = job;
+        pthread_cond_signal(&pool->jobs_notempty); 
     }
     else{
         pool->jobs_tail->next = job;
@@ -179,9 +195,51 @@ void workqueue_add_job(void *(*job_function)(void *arg),void *arg)
     }
 
     pool->cur_queue_size ++;
-    
-    pthread_cond_signal(&(pool->jobs_cond));
+
     pthread_mutex_unlock(&(pool->jobs_mutex));
+}
+
+void workqueue_join()
+{
+    int i;
+    
+    pthread_mutex_lock(&(pool->jobs_mutex));
+    if (pool->shutdown){
+        pthread_mutex_unlock(&(pool->jobs_mutex));
+        return ;
+    }
+    
+    while((pool->cur_queue_size != 0) && (!pool->shutdown)){
+        int rc;
+        struct timespec ts;
+        struct timeval  tp;
+        
+        rc = gettimeofday(&tp,NULL);
+        ts.tv_sec = tp.tv_sec + 60;
+        ts.tv_nsec = tp.tv_usec*1000;
+        
+        rc = pthread_cond_timedwait(&pool->jobs_empty,&pool->jobs_mutex,&ts);
+        if (rc == ETIMEDOUT){
+            pthread_mutex_unlock(&(pool->jobs_mutex));
+        }
+        
+        if (rc != 0){
+            fprintf(stderr,"workqueue join: pthread timed wait.\n");
+        }
+        
+    }
+    
+    pool->shutdown = 1;
+    
+    pthread_mutex_unlock(&(pool->jobs_mutex));
+    
+    pthread_cond_broadcast(&pool->jobs_notempty);
+   
+    for (i=0; i<pool->max_thread_num; i++){
+        pthread_join(pool->threadid[i],NULL);
+    }
+    
+    return ;
 }
 
 /*pre-allocate memory for job list.*/
