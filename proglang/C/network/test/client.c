@@ -6,7 +6,7 @@
 #include "data.h"
 #include "client.h"
 
-char sIP[] ="127.0.0.1";
+char sIP[] ="192.168.107.208";
 int  nport = 5000;
 
 void *start_process(void *arg)
@@ -48,12 +48,16 @@ void *start_process(void *arg)
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,&type);
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE,&state);
     
+    int k = 0;
+    
     gettimeofday(&start,NULL);
     for (i=0; i<this->repeats; i++){
         i = (((this->time > 0) && (this->repeats <= 0)) || (this->repeats == MAXREPS)) ? 0 : i;
         /*get one buffer,suppose buffer[k]*/
-        whichline = i%this->lines->index;
+        whichline = k%this->lines->index;
+        k++;
         //writebytes = socket_write(sockfd,buffer,strlen(buffer));
+        pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type);
         writebytes = socket_write(sockfd,this->lines->buf[whichline],strlen(this->lines->buf[whichline]));
         this->nwrite_total ++;
         if (writebytes < 0){
@@ -63,6 +67,8 @@ void *start_process(void *arg)
         else{
             this->writebytes += writebytes;
         }
+        pthread_setcanceltype(type,NULL);
+        pthread_testcancel();
     }
     gettimeofday(&stop,NULL);
     this->write_elapsed = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);

@@ -68,7 +68,7 @@ int socket_write(int sockfd,const void *vbuf, size_t len)
     
     buf = vbuf;
     n   = len;
-    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type);
+    //pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type);
     while(n > 0){
         if ((w=write(sockfd,buf,n)) < 0){
             if (errno == EINTR){
@@ -82,8 +82,8 @@ int socket_write(int sockfd,const void *vbuf, size_t len)
         n   -= w;
         buf += w;
     }
-    pthread_setcanceltype(type,NULL);
-    pthread_testcancel();
+    //pthread_setcanceltype(type,NULL);
+    //pthread_testcancel();
     
     return len;
 }
@@ -98,7 +98,7 @@ int socket_read(int sockfd, void *vbuf, size_t len)
     
     buf = vbuf;
     n   = len;
-    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type);
+    //pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &type);
     while(n > 0){
         r = read(sockfd,buf,n);
         if (r < 0){
@@ -116,8 +116,8 @@ int socket_read(int sockfd, void *vbuf, size_t len)
         n   -= r;
         buf += r;
     }
-    pthread_setcanceltype(type,NULL);
-    pthread_testcancel();
+    //pthread_setcanceltype(type,NULL);
+    //pthread_testcancel();
     
     return (len - n);
 }
